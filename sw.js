@@ -4,7 +4,8 @@ const VERSION = 'arbre-llm-v2';
 const FICHIERS = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(VERSION).then(c => c.addAll(FICHIERS)));
+  // Chaque fichier est mis en cache séparément : un fichier absent (ex. icône PNG) ne bloque pas les autres.
+  e.waitUntil(caches.open(VERSION).then(c => Promise.all(FICHIERS.map(f => c.add(f).catch(() => {})))));
   self.skipWaiting();
 });
 
