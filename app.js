@@ -23,9 +23,9 @@
   const CHARS_PER_TOKEN = 4;           // rough estimate: 1 token ≈ 4 characters
   const WINDOWS = [200000, 128000, 32000, 100];     // context sizes offered (100: tiny, to see the alert in the demo)
   const ALERT_THRESHOLD = 0.8;         // share of the window above which a gauge turns orange
-  const GAP_X = 160;                   // horizontal gap between two leaves (px)
+  const GAP_X = 168;                   // horizontal gap between two leaves (px)
   const GAP_Y = 100;                   // vertical gap between two levels (px)
-  const NODE_WIDTH = 140;
+  const NODE_WIDTH = 150;
   const NODE_HEIGHT = 40;
   const ARROW_GAP = 7;                 // the line stops before the box to leave room for the arrowhead
   const STACK_OFFSET = 5;              // offset of a group's "shadow" box
@@ -103,27 +103,24 @@
   // ---------- Example tree (hand-written answers) ----------
   const EXAMPLE = [
     { id: ROOT, parent: null, ico: '🌱', kw: 'Start', q: '', a: '', sum: '' },
-    { id: 'n1', parent: ROOT, ico: '⚖️', kw: 'CVA', q: 'What is CVA?',
-      a: "CVA (Credit Valuation Adjustment) is the value adjustment of a derivatives portfolio for the counterparty's default risk: it is the price of that risk.",
-      sum: 'Definition: CVA is the price of counterparty default risk.' },
-    { id: 'n2', parent: 'n1', ico: '🧮', kw: 'CVA formula', q: 'How is it computed?',
-      a: 'CVA = (1 − R) × Σᵢ EE(tᵢ) × PD(tᵢ₋₁, tᵢ) × DF(tᵢ)\nR: recovery rate; EE(tᵢ): expected exposure at date tᵢ; PD(tᵢ₋₁, tᵢ): probability of default between tᵢ₋₁ and tᵢ; DF(tᵢ): discount factor.',
-      sum: 'Discrete formula: recovery, expected exposure, default probabilities, discounting.' },
-    { id: 'n3', parent: 'n2', ico: '🎲', kw: 'Monte Carlo', q: 'How do we get the expected exposure?',
-      a: 'Simulate the market factors on a time grid, revalue the portfolio in each scenario, then average the positive part of the values.',
-      sum: 'EE by Monte Carlo: diffusion, revaluation, average of positive exposures.' },
-    { id: 'n4', parent: 'n2', ico: '🛡️', kw: 'Collateral', q: 'And with collateral?',
-      a: 'Collateral reduces the exposure. Some risk remains during the margin period of risk (MPoR), when the exposure moves without a margin call.',
-      sum: 'Collateral reduces EE; the MPoR leaves residual risk.' },
-    { id: 'n5', parent: 'n1', ico: '🪞', kw: 'DVA', q: 'How does it differ from DVA?',
-      a: "DVA mirrors CVA: it values the risk of one's own default.",
-      sum: "DVA: mirror of CVA, tied to one's own default." },
-    { id: 'n6', parent: ROOT, ico: '🎓', kw: 'Course', q: 'Can you help me prepare a course?',
-      a: 'Yes: tell me the audience, the length and the prerequisites, and I will suggest an outline.',
-      sum: 'Course preparation: audience, length, prerequisites requested.' },
-    { id: 'n7', parent: 'n6', ico: '🗂️', kw: 'XVA outline', q: "Master's students, three hours, on XVA.",
-      a: '1) Why XVA since 2008. 2) CVA and DVA, with a worked example. 3) FVA, KVA, MVA and the debates around them.',
-      sum: "Three-part XVA outline for a master's course." },
+    { id: 'n1', parent: ROOT, ico: '🧠', kw: 'Mind map', q: 'What is a mind map?',
+      a: 'A mind map is a diagram that starts from one central idea and branches out into related ideas, like a tree. You see the whole topic at a glance and how each part connects to the others.',
+      sum: 'A mind map: a central idea branching into related ideas, seen at a glance.' },
+    { id: 'n2', parent: 'n1', ico: '🧩', kw: 'Why structure', q: 'Why does structuring information help?',
+      a: 'We can only hold a few things in mind at once. Grouping ideas and linking them makes information easier to understand, to find again and to remember.',
+      sum: 'Structure helps: grouped, linked ideas are easier to understand and remember.' },
+    { id: 'n3', parent: 'n2', ico: '📦', kw: 'Grouping ideas', q: 'How do I group ideas?',
+      a: 'Put one idea per box and give it a short keyword. Gather related ideas under a common branch, and keep only a few branches per level so the map stays readable.',
+      sum: 'One idea per box, short keywords, related ideas under one branch, few branches per level.' },
+    { id: 'n4', parent: 'n1', ico: '✏️', kw: 'Build one', q: 'How do I build one?',
+      a: 'Write the main topic in the centre. Add the big themes as branches, then the details as smaller branches. Use keywords rather than sentences.',
+      sum: 'Topic in the centre, themes as branches, details below, keywords rather than sentences.' },
+    { id: 'n5', parent: ROOT, ico: '🤖', kw: 'AI chats', q: 'Why use a tree for AI conversations?',
+      a: 'A classic chat is one long thread: going back or exploring another idea quickly gets messy. A tree lets you branch off, come back to any point, and send the AI only the branch that matters.',
+      sum: 'A tree lets you branch, come back anywhere, and send the AI only the useful branch.' },
+    { id: 'n6', parent: 'n5', ico: '🌿', kw: 'Branching', q: 'What happens if I ask from an older box?',
+      a: 'A new branch starts from that box. The AI only receives the path leading to it, so the other branches do not clutter its context.',
+      sum: 'Asking from an older box starts a new branch; the AI gets only that path.' },
   ];
 
   // Temporary icons for new questions: word stem (without accents, English or French) → emoji.
