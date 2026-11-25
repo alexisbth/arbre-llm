@@ -1,4 +1,4 @@
-/* arbre-llm — preuve de concept (POC), v2
+/* arbre-llm — preuve de concept (POC), v3
  *
  * Démarche générale
  * 1. Données : une liste plate de nœuds { id, parent, q, a, kw, sum, ico }.
@@ -10,7 +10,9 @@
  * 4. Dessin : un SVG reconstruit à chaque changement, avec une flèche au bout de chaque lien.
  * 5. Gestes : glisser = déplacer, pincer ou molette = zoomer, toucher = choisir (ou éclater un groupe).
  * 6. Panneau : fil de la conversation, contexte compact envoyé au LLM, jauges de tokens.
- * Aucun LLM n'est appelé : les réponses sont simulées.
+ * 7. LLM : avec une clé API Anthropic (gardée sur l'appareil), la question part à Claude avec le
+ *    contexte compact ; la réponse s'affiche au fil de l'eau, puis un petit modèle remplit la fiche
+ *    du nœud (mot-clé, emoji, résumé). Sans clé : réponses simulées (mode démo).
  * Sécurité : tout texte est inséré avec textContent (jamais innerHTML), aucun script tiers.
  */
 {
@@ -36,6 +38,23 @@
   const CLE_STOCKAGE = 'arbre-llm-v2';
   const RACINE = 'racine';
   const SELECTION_INITIALE = 'n3';
+
+  // ---------- LLM : Claude via l'API Anthropic ----------
+  const API_URL = 'https://api.anthropic.com/v1/messages';
+  const API_VERSION = '2026-10-21';
+  const MODELES = [                    // [identifiant, libellé] ; le premier est le modèle par défaut
+    ['claude-sonnet-5-5', 'Sonnet 5.5 (équilibré)'],
+    ['claude-haiku-5-5', 'Haiku 5.5 (rapide, économique)'],
+    ['claude-opus-5-5', 'Opus 5.5 (le plus puissant)'],
+  ];
+  const MODELE_FICHE = 'claude-haiku-5-5';   // petit modèle pour le mot-clé, l'emoji et le résumé
+  const MAX_TOKENS_REPONSE = 4096;
+  const MAX_TOKENS_FICHE = 300;
+  const LONGUEUR_MAX_FICHE = 6000;     // caractères de la réponse transmis pour faire la fiche
+  const LONGUEUR_MOT_CLE_MAX = 30;     // caractères gardés pour un mot-clé produit par le LLM
+  const CLE_REGLAGES = 'arbre-llm-reglages';
+  const CONSIGNE = "Tu réponds dans une application de conversation en arbre. Réponds dans la langue de la question, " +
+    "en texte brut, sans Markdown ni LaTeX : écris les formules en notation lisible (Unicode) et définis chaque notation.";
 
   // ---------- Arbre d'exemple (réponses écrites à la main) ----------
   const EXEMPLE = [
@@ -64,7 +83,7 @@
   ];
 
   // Icônes provisoires pour les nouvelles questions : racine de mot (sans accent) → emoji.
-  // Dans la version avec LLM, l'emoji sera choisi par le LLM en même temps que le mot-clé.
+  // Avec une clé API, l'emoji est ensuite remplacé par celui que choisit le LLM.
   const ICONES = [
     ['arbre', '🌳'], ['foret', '🌲'], ['cours', '🎓'], ['ecole', '🎓'], ['etudiant', '🎓'], ['banque', '🏦'],
     ['argent', '💶'], ['prix', '💶'], ['cout', '💶'], ['risque', '⚠️'], ['calcul', '🧮'], ['formule', '🧮'],
@@ -122,6 +141,9 @@
   let selection = etat.selection || SELECTION_INITIALE;
   let groupes = etat.groupes || [];            // [{ id, membres: [ids des nœuds fusionnés] }]
   let fenetre = FENETRES.includes(etat.fenetre) ? etat.fenetre : FENETRES[0];
+  for (const n of noeuds) {                    // réponse coupée par une fermeture de l'appli
+    if (n.enCours) Object.assign(n, { enCours: false, erreur: true, a: n.a || 'Réponse interrompue.' });
+  }
   let modeSelection = false;
   const choixFusion = new Set();               // cases touchées en mode sélection
   const vue = { x: 0, y: 0, k: 1 };            // translation (x, y) et échelle k de la carte
@@ -355,7 +377,7 @@
     modeSelection = actif;
     choixFusion.clear();
     document.body.classList.toggle('mode-selection', actif);
-    $('sous-titre').textContent = actif ? 'Touche les cases à fusionner' : 'POC · sans LLM';
+    $('sous-titre').textContent = actif ? 'Touche les cases à fusionner' : libelleMode();
     fermerMenu();
     majBoutonFusion();
     dessiner();
@@ -393,9 +415,15 @@
     if (!c.length) fil.append(htmlEl('p', 'vide', 'Aucun échange sur ce chemin pour le moment.'));
     c.forEach((m, i) => {
       if (i > 0) fil.append(htmlEl('div', 'fleche-fil', '↓'));
-      const bloc = htmlEl('article', 'echange' + (m.id === selection ? ' courant' : ''));
+      const bloc = htmlEl('article', 'echange' + (m.id === selection ? ' courant' : '') + (m.erreur ? ' erreur' : ''));
       bloc.dataset.id = m.id;
-      bloc.append(htmlEl('p', 'kw', etiquette(m)), htmlEl('p', 'q', m.q), htmlEl('p', 'a', m.a));
+      bloc.append(htmlEl('p', 'kw', etiquette(m)), htmlEl('p', 'q', m.q), htmlEl('p', 'a', texteReponse(m)));
+      if (m.erreur) {
+        const b = htmlEl('button', 'reessayer', 'Réessayer');
+        b.type = 'button';
+        b.dataset.reessayer = m.id;
+        bloc.append(b);
+      }
       fil.append(bloc);
     });
     const suites = enfants(selection);
@@ -415,9 +443,18 @@
     remplirJauges(c);
   }
 
+  const texteReponse = n => n.a || (n.enCours ? 'Réponse en cours…' : '');
   const tokens = nbCar => Math.ceil(nbCar / CARACTERES_PAR_TOKEN);
   const somme = (liste, f) => liste.reduce((s, n) => s + f(n), 0);
   const tailleEchange = n => n.q.length + n.a.length;
+  // Tokens d'un échange : nombre réel renvoyé par l'API pour la réponse s'il est connu, sinon estimation
+  const tokensEchange = n => (n.usage ? tokens(n.q.length) + n.usage.sortie : tokens(tailleEchange(n)));
+
+  // Découpe d'un chemin : étapes anciennes (résumé seulement) et NB_ECHANGES_COMPLETS derniers échanges
+  function decouper(c) {
+    const coupe = Math.max(0, c.length - NB_ECHANGES_COMPLETS);
+    return { resumes: c.slice(0, coupe), complets: c.slice(coupe) };
+  }
 
   // Contexte compact : résumé des étapes anciennes + NB_ECHANGES_COMPLETS derniers échanges en entier
   function remplirContexte(c) {
@@ -427,8 +464,7 @@
       ctx.append(htmlEl('p', 'vide', 'Rien à envoyer : une question posée ici partira sans contexte.'));
       return;
     }
-    const coupe = Math.max(0, c.length - NB_ECHANGES_COMPLETS);
-    const resumes = c.slice(0, coupe), complets = c.slice(coupe);
+    const { resumes, complets } = decouper(c);
     const compact = somme(resumes, n => n.kw.length + n.sum.length) + somme(complets, tailleEchange);
     const complet = somme(c, tailleEchange);
 
@@ -459,8 +495,8 @@
 
   // Deux jauges : tokens du chemin en cours et de tout l'arbre, rapportés à la fenêtre du modèle
   function remplirJauges(c) {
-    const ratioChemin = majJauge('j-chemin', tokens(somme(c, tailleEchange)));
-    majJauge('j-arbre', tokens(somme(noeuds, tailleEchange)));
+    const ratioChemin = majJauge('j-chemin', somme(c, tokensEchange));
+    majJauge('j-arbre', somme(noeuds, tokensEchange));
     $('b-repartir').hidden = !(ratioChemin >= SEUIL_ALERTE && c.length > 0);
   }
   function majJauge(id, nbTokens) {
@@ -492,6 +528,8 @@
   });
 
   $('fil').addEventListener('click', e => {
+    const r = e.target.closest('[data-reessayer]');
+    if (r) { repondre(noeud(r.dataset.reessayer)); return; }
     const c = e.target.closest('[data-id]');
     if (c) choisir(c.dataset.id, true);
   });
@@ -499,6 +537,7 @@
     const ouvert = $('panneau').classList.toggle('replie') === false;
     $('poignee').setAttribute('aria-expanded', String(ouvert));
     centrerSur(selection);
+    if (ouvert) requestAnimationFrame(() => $('fil').querySelector('.courant')?.scrollIntoView({ block: 'nearest' }));
   });
   document.querySelectorAll('[data-onglet]').forEach(b => b.addEventListener('click', () => {
     document.querySelectorAll('[data-onglet]').forEach(o => {
@@ -508,10 +547,10 @@
     });
   }));
 
-  // ---------- Nouvelle question (réponse simulée) ----------
+  // ---------- Nouvelle question ----------
   const MOTS_VIDES = new Set(['comment', 'pourquoi', 'quelle', 'quelles', 'quels', 'quel', 'dans', 'avec',
     'pour', 'sans', 'faire', 'peux', 'peut', 'cette', 'entre', 'sont', 'what', 'with', 'that', 'this', 'does', 'from']);
-  function motCle(q) {                // provisoire : le mot significatif le plus long (le LLM le fera ensuite)
+  function motCle(q) {                // provisoire : le mot significatif le plus long (remplacé par la fiche du LLM)
     const mots = q.match(/[\p{L}\p{N}'-]+/gu) || [];
     const m = mots.filter(w => w.length >= 4 && !MOTS_VIDES.has(w.toLowerCase()))
       .sort((a, b) => b.length - a.length)[0] || mots[0] || 'Question';
@@ -524,7 +563,7 @@
     }
     return '';
   }
-  const reponseSimulee = q => `Réponse simulée à « ${q} ».\nÀ l'étape suivante, ce texte viendra du LLM choisi (Claude, GPT, Mistral, modèle local…), ainsi que le mot-clé, l'icône et le résumé.`;
+  const reponseSimulee = q => `Mode démo : réponse simulée à « ${q} ».\nPour de vraies réponses, ajoute ta clé API Anthropic dans ⋯ → Réglages du LLM.`;
 
   const champ = $('question');
   champ.addEventListener('input', () => {
@@ -541,18 +580,181 @@
     e.preventDefault();
     const q = champ.value.trim();
     if (!q) return;
-    const n = { id: 'n' + nouvelId(), parent: selection, q, a: '…',
+    // Mot-clé, icône et résumé provisoires, remplacés par la fiche du LLM une fois la réponse reçue
+    const n = { id: 'n' + nouvelId(), parent: selection, q, a: '',
       ico: icone(q), kw: motCle(q), sum: 'Question : ' + abreger(q, LONGUEUR_RESUME) };
     noeuds.push(n);
     champ.value = '';
     champ.style.height = '';
+    repondre(n);
     choisir(n.id, true);
-    setTimeout(() => {
-      n.a = reponseSimulee(q);
+  });
+
+  // ---------- Réponse : Claude si une clé est réglée, sinon réponse simulée ----------
+  async function repondre(n) {
+    Object.assign(n, { enCours: true, erreur: false, a: '' });
+    delete n.usage;
+    if (selection === n.id) remplirPanneau();
+    if (!reglages.cle) {
+      setTimeout(() => {
+        Object.assign(n, { enCours: false, a: reponseSimulee(n.q) });
+        sauver();
+        if (selection === n.id) remplirPanneau();
+      }, DELAI_REPONSE_SIMULEE);
+      return;
+    }
+    try {
+      await demanderClaude(n);
+      n.enCours = false;
       sauver();
       if (selection === n.id) remplirPanneau();
-    }, DELAI_REPONSE_SIMULEE);
+      try { await ficherEchange(n); } catch { /* fiche facultative : on garde le mot-clé provisoire */ }
+    } catch (err) {
+      Object.assign(n, { enCours: false, erreur: true, a: '⚠️ ' + err.message });
+      toast('Le LLM a renvoyé une erreur');
+    }
+    sauver();
+    dessiner();
+  }
+
+  function enTetes() {
+    const h = {
+      'content-type': 'application/json',
+      'x-api-key': reglages.cle,
+      'anthropic-version': API_VERSION,
+      'anthropic-dangerous-direct-browser-access': 'true',   // autorise l'appel direct depuis un navigateur
+    };
+    if (reglages.espace) h['anthropic-workspace-id'] = reglages.espace;
+    return h;
+  }
+  async function erreurApi(r) {
+    let msg = `Erreur ${r.status}`;
+    try { const j = await r.json(); if (j.error?.message) msg += ' : ' + j.error.message; } catch { /* corps illisible */ }
+    if (r.status === 401) msg += ' (clé API refusée : vérifie-la dans les réglages)';
+    return new Error(msg);
+  }
+
+  // Requête : consigne + résumé des étapes anciennes, puis les derniers échanges en entier, puis la question
+  function construireRequete(n) {
+    const c = chemin(n.parent).filter(m => m.id !== RACINE);
+    const { resumes, complets } = decouper(c);
+    let systeme = CONSIGNE;
+    if (resumes.length) {
+      systeme += '\n\nRésumé des étapes précédentes de cette branche :\n' + resumes.map(m => `- ${m.kw} : ${m.sum}`).join('\n');
+    }
+    const messages = [];
+    for (const m of complets) {
+      if (m.a && !m.erreur) messages.push({ role: 'user', content: m.q }, { role: 'assistant', content: m.a });
+    }
+    messages.push({ role: 'user', content: n.q });
+    return { system: systeme, messages };
+  }
+
+  // Appel en flux (« streaming ») : la réponse s'affiche au fur et à mesure qu'elle arrive
+  async function demanderClaude(n) {
+    const r = await fetch(API_URL, {
+      method: 'POST', headers: enTetes(),
+      body: JSON.stringify({ model: reglages.modele, max_tokens: MAX_TOKENS_REPONSE, stream: true, ...construireRequete(n) }),
+    });
+    if (!r.ok) throw await erreurApi(r);
+    const lecteur = r.body.getReader(), decodeur = new TextDecoder();
+    let tampon = '';
+    n.usage = { entree: 0, sortie: 0 };
+    for (;;) {
+      const { done, value } = await lecteur.read();
+      if (done) break;
+      tampon += decodeur.decode(value, { stream: true }).replace(/\r/g, '');
+      const evenements = tampon.split('\n\n');
+      tampon = evenements.pop();                  // dernier morceau éventuellement incomplet
+      for (const ev of evenements) {
+        const ligne = ev.split('\n').find(l => l.startsWith('data:'));
+        if (!ligne) continue;
+        const d = JSON.parse(ligne.slice(5));
+        if (d.type === 'message_start') n.usage.entree = d.message.usage.input_tokens;
+        else if (d.type === 'content_block_delta' && d.delta.type === 'text_delta') { n.a += d.delta.text; afficherFlux(n); }
+        else if (d.type === 'message_delta' && d.usage) n.usage.sortie = d.usage.output_tokens;
+        else if (d.type === 'error') throw new Error(d.error.message);
+      }                                            // les autres événements (ping…) sont ignorés
+    }
+  }
+  function afficherFlux(n) {                     // met à jour seulement le texte de la réponse
+    if (selection !== n.id) return;
+    const p = document.querySelector(`#fil [data-id="${CSS.escape(n.id)}"] .a`);
+    if (p) p.textContent = n.a;
+  }
+
+  // Fiche du nœud : le petit modèle est obligé de répondre via un « outil » au format imposé
+  const OUTIL_FICHE = {
+    name: 'fiche',
+    description: "Fiche de synthèse d'un échange question-réponse",
+    input_schema: {
+      type: 'object',
+      properties: {
+        mot_cle: { type: 'string', description: "1 à 3 mots qui résument l'échange" },
+        emoji: { type: 'string', description: "Un seul emoji qui illustre le sujet, ou une chaîne vide si aucun n'est vraiment illustratif" },
+        resume: { type: 'string', description: "Résumé de l'échange en 25 mots maximum, réutilisable comme contexte" },
+      },
+      required: ['mot_cle', 'emoji', 'resume'],
+    },
+  };
+  async function ficherEchange(n) {
+    const r = await fetch(API_URL, {
+      method: 'POST', headers: enTetes(),
+      body: JSON.stringify({
+        model: MODELE_FICHE, max_tokens: MAX_TOKENS_FICHE,
+        tools: [OUTIL_FICHE], tool_choice: { type: 'tool', name: OUTIL_FICHE.name },
+        messages: [{ role: 'user', content: `Question : ${n.q}\n\nRéponse : ${n.a.slice(0, LONGUEUR_MAX_FICHE)}\n\nRemplis la fiche de cet échange, dans la langue de la question.` }],
+      }),
+    });
+    if (!r.ok) throw await erreurApi(r);
+    const f = (await r.json()).content?.find(b => b.type === 'tool_use')?.input;
+    if (!f) return;
+    if (f.mot_cle) n.kw = abreger(String(f.mot_cle), LONGUEUR_MOT_CLE_MAX);
+    n.ico = [...String(f.emoji || '')].slice(0, 4).join('');   // un emoji peut compter plusieurs caractères
+    if (f.resume) n.sum = String(f.resume);
+  }
+
+  // ---------- Réglages du LLM (clé gardée sur l'appareil uniquement) ----------
+  function chargerReglages() {
+    const defaut = { cle: '', modele: MODELES[0][0], espace: '', retenir: false };
+    try { return { ...defaut, ...JSON.parse(localStorage.getItem(CLE_REGLAGES)) }; } catch { return defaut; }
+  }
+  function sauverReglages() {
+    const aStocker = { ...reglages, cle: reglages.retenir ? reglages.cle : '' };   // sans « Garder », la clé reste en mémoire vive
+    try { localStorage.setItem(CLE_REGLAGES, JSON.stringify(aStocker)); } catch { /* ignoré */ }
+  }
+  let reglages = chargerReglages();
+  if (!MODELES.some(([id]) => id === reglages.modele)) reglages.modele = MODELES[0][0];
+  for (const [id, libelle] of MODELES) {
+    const o = htmlEl('option', null, libelle);
+    o.value = id;
+    $('r-modele').append(o);
+  }
+  function libelleMode() {
+    const m = MODELES.find(([id]) => id === reglages.modele);
+    return reglages.cle ? `Claude ${m ? m[1].split(' (')[0] : ''}` : 'POC · démo sans LLM';
+  }
+  function ouvrirReglages() {
+    fermerMenu();
+    $('r-cle').value = reglages.cle;
+    $('r-modele').value = reglages.modele;
+    $('r-espace').value = reglages.espace;
+    $('r-retenir').checked = reglages.retenir;
+    $('reglages').showModal();
+  }
+  $('f-reglages').addEventListener('submit', e => {
+    e.preventDefault();
+    reglages = {
+      cle: $('r-cle').value.trim(), modele: $('r-modele').value,
+      espace: $('r-espace').value.trim(), retenir: $('r-retenir').checked,
+    };
+    sauverReglages();
+    $('reglages').close();
+    $('sous-titre').textContent = libelleMode();
+    toast(reglages.cle ? 'Claude est branché' : 'Mode démo : réponses simulées');
   });
+  $('r-effacer').addEventListener('click', () => { $('r-cle').value = ''; });
+  $('r-fermer').addEventListener('click', () => $('reglages').close());
 
   // ---------- Barre du haut ----------
   function fermerMenu() {
@@ -567,6 +769,7 @@
   document.addEventListener('pointerdown', e => {
     if (!$('menu').hidden && !e.target.closest('#menu, #b-menu')) fermerMenu();
   });
+  $('b-reglages').addEventListener('click', ouvrirReglages);
   $('b-selection').addEventListener('click', () => passerEnSelection(true));
   $('b-annuler').addEventListener('click', () => passerEnSelection(false));
   $('b-fusionner').addEventListener('click', fusionner);
@@ -600,6 +803,7 @@
   });
 
   // ---------- Démarrage ----------
+  $('sous-titre').textContent = libelleMode();
   dessiner();
   requestAnimationFrame(cadrer);
   addEventListener('resize', () => centrerSur(selection));   // ex. ouverture du clavier

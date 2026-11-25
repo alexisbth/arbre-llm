@@ -158,6 +158,25 @@ body.mode-selection #barre .en-selection { display: inline-block }
 #b-repartir { font-size: 14px }
 @media (max-width: 899px) { #panneau:not(.replie) #coin { display: none } }   /* panneau ouvert : la carte est petite */
 
+/* ---- Réglages du LLM ---- */
+dialog {
+  width: min(92vw, 440px); padding: 20px; color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 18px;
+}
+dialog::backdrop { background: rgb(0 0 0 / .45) }
+dialog h2 { margin: 0 0 4px; font-size: 20px }
+#f-reglages label { display: grid; gap: 4px; margin-top: 12px; font-size: 14px; font-weight: 600 }
+#f-reglages input:not([type=checkbox]), #f-reglages select {
+  min-height: 44px; padding: 8px 12px; font: inherit; font-size: 16px; font-weight: 400; color: inherit;
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+}
+#f-reglages label.case { display: flex; align-items: center; gap: 10px; font-weight: 500 }
+#f-reglages input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--ink) }
+.actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 16px }
+button.principal { background: var(--ink); color: var(--bg); border-color: var(--ink); font-weight: 700 }
+.reessayer { margin-top: 8px; font-size: 14px }
+.echange.erreur .a { color: #c2410c }
+
 #toast {
   position: fixed; left: 50%; top: calc(env(safe-area-inset-top) + 72px); z-index: 5;
   padding: 8px 14px; border-radius: 20px; background: var(--ink); color: var(--bg); font-size: 14px;

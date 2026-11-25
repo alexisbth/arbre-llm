@@ -2,7 +2,7 @@
 
 Une conversation avec un LLM, vue comme un arbre (carte mentale) : chaque question est un nœud, chaque nouvelle question posée depuis un nœud ancien crée une branche.
 
-Ce POC sert à juger l'ergonomie sur téléphone. **Aucun LLM n'est branché** : les réponses sont simulées.
+Ce POC sert à juger l'ergonomie sur téléphone. Sans clé API, il fonctionne en **mode démo** (réponses simulées). Avec une clé API Anthropic, il interroge **Claude**.
 
 ## Ce qu'on peut faire
 
@@ -14,7 +14,14 @@ Ce POC sert à juger l'ergonomie sur téléphone. **Aucun LLM n'est branché** :
   - **Fil** : la conversation de la racine jusqu'à la case choisie. Toucher un échange y ramène la carte.
   - **Contexte LLM** : ce qui serait envoyé au LLM pour une question posée ici, soit le résumé des étapes anciennes et les 2 derniers échanges en entier, rien des branches voisines.
 - **Poser une question** depuis n'importe quelle case crée une nouvelle branche.
-- **Menu ⋯** : copier l'arbre en JSON, réinitialiser l'exemple (deux appuis).
+- **Claude** : menu ⋯ → « Réglages du LLM », coller sa clé API (créée dans la Claude Console, platform.claude.com) et choisir le modèle. La réponse s'affiche au fil de l'eau. Ensuite, Haiku remplit la fiche de la case (mot-clé, emoji, résumé). En cas d'erreur, un bouton « Réessayer » apparaît dans le fil.
+- **Menu ⋯** : réglages du LLM, copier l'arbre en JSON, réinitialiser l'exemple (deux appuis).
+
+## Clé API et sécurité
+
+- La clé reste sur l'appareil. Elle n'est envoyée qu'à `api.anthropic.com`, que la politique de sécurité (CSP) de la page est seule à autoriser.
+- Elle n'est gardée après fermeture que si « Garder la clé sur cet appareil » est coché. Elle n'est jamais incluse dans l'export JSON.
+- L'abonnement Claude (Pro…) n'inclut pas l'API : elle est facturée à part dans la Claude Console. Fixer une limite de dépenses.
 
 ## Fonctionnement
 
@@ -28,7 +35,9 @@ Ce POC sert à juger l'ergonomie sur téléphone. **Aucun LLM n'est branché** :
 
 Un nœud est un objet `{ id, parent, q, a, kw, sum, ico }` : question, réponse, mot-clé, résumé, emoji. Le seul champ `parent` décrit tout l'arbre. Une fusion est une liste de nœuds d'un seul tenant, affichée comme une case.
 
-Les données restent dans le navigateur (`localStorage`). Aucune bibliothèque externe, aucun serveur. Une politique de sécurité (CSP) interdit tout script tiers. Les tokens sont estimés (1 token ≈ 4 caractères).
+Pour une question posée depuis une case, l'appli envoie à Claude : une consigne, le résumé des étapes anciennes du chemin, les 2 derniers échanges en entier, puis la question. Les branches voisines ne sont jamais envoyées.
+
+Les données restent dans le navigateur (`localStorage`). Aucune bibliothèque externe, aucun serveur. Une politique de sécurité (CSP) interdit tout script tiers. Les jauges utilisent le nombre réel de tokens de réponse renvoyé par l'API quand il est connu, sinon une estimation (1 token ≈ 4 caractères).
 
 ## Installer sur téléphone
 
@@ -44,9 +53,9 @@ python3 -m http.server 8000
 
 ## Étapes suivantes
 
-1. Brancher un LLM avec la clé API de l'utilisateur (gardée sur l'appareil).
-2. Générer le mot-clé, l'emoji et le résumé de chaque nœud par un second appel court, et un résumé pour chaque fusion.
-3. Compter les tokens réels renvoyés par l'API au lieu de l'estimation.
+1. Synchronisation et partage avec Supabase (données chiffrées sur l'appareil) : partie premium.
+2. Autres fournisseurs de LLM (OpenAI, Mistral, modèle local).
+3. Résumé par le LLM de chaque case fusionnée.
 4. Passer le stockage à IndexedDB, avec import et export de fichiers.
 
 ## Licence

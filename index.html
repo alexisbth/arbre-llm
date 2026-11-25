@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self' https://api.anthropic.com; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>Arbre LLM</title>
 <meta name="theme-color" content="#101418">
 <link rel="manifest" href="manifest.webmanifest">
@@ -22,6 +22,7 @@
   <button id="b-fusionner" class="en-selection" type="button">Fusionner</button>
   <button id="b-annuler" class="en-selection" type="button">Annuler</button>
   <div id="menu" hidden>
+    <button id="b-reglages" type="button">Réglages du LLM</button>
     <button id="b-export" type="button">Copier en JSON</button>
     <button id="b-reinit" type="button">Réinitialiser</button>
   </div>
@@ -64,6 +65,29 @@
     <button type="submit">Envoyer</button>
   </form>
 </section>
+
+<dialog id="reglages" aria-labelledby="titre-reglages">
+  <form id="f-reglages">
+    <h2 id="titre-reglages">Réglages du LLM</h2>
+    <p class="note">Sans clé, l'appli reste en mode démo (réponses simulées).</p>
+    <label>Clé API Anthropic
+      <input id="r-cle" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…">
+    </label>
+    <label>Modèle
+      <select id="r-modele"></select>
+    </label>
+    <label>ID d'espace de travail (seulement si l'API le demande)
+      <input id="r-espace" type="text" autocomplete="off" spellcheck="false">
+    </label>
+    <label class="case"><input id="r-retenir" type="checkbox"> Garder la clé sur cet appareil</label>
+    <p class="note">La clé reste sur cet appareil et n'est envoyée qu'à api.anthropic.com. Crée-la dans la Claude Console (platform.claude.com) et fixe-y une limite de dépenses. Si « Garder » n'est pas coché, elle est oubliée quand l'appli se ferme.</p>
+    <div class="actions">
+      <button id="r-effacer" type="button">Effacer la clé</button>
+      <button id="r-fermer" type="button">Fermer</button>
+      <button class="principal" type="submit">Enregistrer</button>
+    </div>
+  </form>
+</dialog>
 
 <div id="toast" role="status" aria-live="polite"></div>
 
