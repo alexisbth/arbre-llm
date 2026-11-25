@@ -1,63 +1,62 @@
 # Arbre LLM — POC
 
-Une conversation avec un LLM, vue comme un arbre (carte mentale) : chaque question est un nœud, chaque nouvelle question posée depuis un nœud ancien crée une branche.
+A conversation with an LLM, shown as a tree (mind map): each question is a node, and asking a new question from an earlier node starts a new branch.
 
-Ce POC sert à juger l'ergonomie sur téléphone. Sans clé API, il fonctionne en **mode démo** (réponses simulées). Avec une clé API Anthropic, il interroge **Claude**.
+This proof of concept is meant to assess the user experience on a phone. Without an API key it runs in **demo mode** (simulated answers). With an Anthropic API key, it queries **Claude**.
 
-## Ce qu'on peut faire
+## Features
 
-- **Carte** : glisser pour se déplacer, pincer (ou molette) pour zoomer, toucher une case pour la choisir. Les flèches vont de chaque question vers ses suites.
-- **Icônes** : un emoji devant le mot-clé quand il illustre bien le contenu.
-- **Fusion** : « Sélection », puis toucher les cases à réunir. Les cases qui les relient s'ajoutent automatiquement (en plus pâle). « Fusionner » en fait une seule case avec une pastille « +N ». Toucher cette case l'éclate.
-- **Jauges** (en bas à droite) : tokens du chemin en cours et de tout l'arbre, rapportés au contexte maximal du modèle. Toucher les jauges change ce maximum (200 k, 128 k, 32 k, ou 100 pour voir l'alerte). Au-delà de 80 % du chemin, « Repartir du résumé » crée une nouvelle conversation qui part du résumé.
-- **Panneau du bas** (toucher la poignée pour l'ouvrir) :
-  - **Fil** : la conversation de la racine jusqu'à la case choisie. Toucher un échange y ramène la carte.
-  - **Contexte LLM** : ce qui serait envoyé au LLM pour une question posée ici, soit le résumé des étapes anciennes et les 2 derniers échanges en entier, rien des branches voisines.
-- **Poser une question** depuis n'importe quelle case crée une nouvelle branche.
-- **Claude** : menu ⋯ → « Réglages du LLM », coller sa clé API (créée dans la Claude Console, platform.claude.com) et choisir le modèle. La réponse s'affiche au fil de l'eau. Ensuite, Haiku remplit la fiche de la case (mot-clé, emoji, résumé). En cas d'erreur, un bouton « Réessayer » apparaît dans le fil.
-- **Menu ⋯** : réglages du LLM, copier l'arbre en JSON, réinitialiser l'exemple (deux appuis).
+- **Map**: drag to pan, pinch (or mouse wheel) to zoom, tap a node to select it. Arrows point from each question to its follow-ups.
+- **Icons**: an emoji before the keyword when it clearly illustrates the content.
+- **Merge**: tap "Sélection", then the nodes to group. The nodes that connect them are added automatically (shown paler). "Fusionner" turns them into a single node with a "+N" badge. Tap that node to expand it again.
+- **Gauges** (bottom right): tokens used by the current path and by the whole tree, compared with the model's maximum context size. Tap the gauges to change that maximum (200k, 128k, 32k, or 100 to see the alert). Once the path exceeds 80%, "Repartir du résumé" starts a new conversation from the summary.
+- **Bottom panel** (tap the handle to open it):
+  - **Fil** (thread): the conversation from the root to the selected node. Tapping an exchange moves the map to it.
+  - **Contexte LLM**: what would be sent to the LLM for a question asked from here, i.e. the summary of earlier steps plus the last 2 exchanges in full, and nothing from neighbouring branches.
+- **Ask a question** from any node to create a new branch.
+- **Claude**: menu ⋯ → "Réglages du LLM", paste your API key (created in the Claude Console, platform.claude.com) and choose the model. The answer streams in as it is written. Haiku then fills in the node's card (keyword, emoji, summary). If an error occurs, a "Réessayer" (retry) button appears in the thread.
+- **Menu ⋯**: LLM settings, copy the tree as JSON, reset the example (tap twice).
 
-## Clé API et sécurité
+## API key and security
 
-- La clé reste sur l'appareil. Elle n'est envoyée qu'à `api.anthropic.com`, que la politique de sécurité (CSP) de la page est seule à autoriser.
-- Elle n'est gardée après fermeture que si « Garder la clé sur cet appareil » est coché. Elle n'est jamais incluse dans l'export JSON.
-- L'abonnement Claude (Pro…) n'inclut pas l'API : elle est facturée à part dans la Claude Console. Fixer une limite de dépenses.
+- The key stays on the device. It is only sent to `api.anthropic.com`, the only external address the page's security policy (CSP) allows.
+- It is kept after closing the app only if "Garder la clé sur cet appareil" (keep the key on this device) is checked. It is never included in the JSON export.
+- A Claude subscription (Pro…) does not include the API: API usage is billed separately in the Claude Console. Set a spending limit there.
 
-## Fonctionnement
+## How it works
 
-| Fichier | Rôle |
+| File | Role |
 |---|---|
-| `index.html` | Structure de la page |
-| `style.css` | Apparence (thème clair et sombre) |
-| `app.js` | Données, fusion, disposition de l'arbre, dessin SVG, gestes, panneau, jauges |
-| `manifest.webmanifest`, `sw.js` | Rendent le site installable (PWA) et utilisable hors connexion |
-| `.github/workflows/pages.yml` | Met le site en ligne sur GitHub Pages et fabrique les icônes PNG à partir de `icon.svg` |
+| `index.html` | Page structure |
+| `style.css` | Look and feel (light and dark themes) |
+| `app.js` | Data, merging, tree layout, SVG drawing, gestures, panel, gauges, LLM calls |
+| `manifest.webmanifest`, `sw.js` | Make the site installable (PWA) and usable offline |
 
-Un nœud est un objet `{ id, parent, q, a, kw, sum, ico }` : question, réponse, mot-clé, résumé, emoji. Le seul champ `parent` décrit tout l'arbre. Une fusion est une liste de nœuds d'un seul tenant, affichée comme une case.
+A node is an object `{ id, parent, q, a, kw, sum, ico }`: question, answer, keyword, summary, emoji. The `parent` field alone describes the whole tree. A merge is a connected list of nodes, displayed as a single node.
 
-Pour une question posée depuis une case, l'appli envoie à Claude : une consigne, le résumé des étapes anciennes du chemin, les 2 derniers échanges en entier, puis la question. Les branches voisines ne sont jamais envoyées.
+For a question asked from a node, the app sends Claude: an instruction, the summary of the earlier steps of the path, the last 2 exchanges in full, then the question. Neighbouring branches are never sent.
 
-Les données restent dans le navigateur (`localStorage`). Aucune bibliothèque externe, aucun serveur. Une politique de sécurité (CSP) interdit tout script tiers. Les jauges utilisent le nombre réel de tokens de réponse renvoyé par l'API quand il est connu, sinon une estimation (1 token ≈ 4 caractères).
+Data stays in the browser (`localStorage`). No external library, no server. A security policy (CSP) blocks any third-party script. The gauges use the actual number of answer tokens returned by the API when known, and an estimate otherwise (1 token ≈ 4 characters).
 
-## Installer sur téléphone
+## Install on a phone
 
-- **Android (Chrome)** : ouvrir le lien, menu ⋮ puis « Installer l'application ».
-- **iPhone (Safari)** : ouvrir le lien, bouton Partager puis « Sur l'écran d'accueil ».
+- **Android (Chrome)**: open the link, menu ⋮, then "Install app".
+- **iPhone (Safari)**: open the link, Share button, then "Add to Home Screen".
 
-## Tester en local
+## Run locally
 
 ```bash
 python3 -m http.server 8000
-# puis ouvrir http://localhost:8000
+# then open http://localhost:8000
 ```
 
-## Étapes suivantes
+## Next steps
 
-1. Synchronisation et partage avec Supabase (données chiffrées sur l'appareil) : partie premium.
-2. Autres fournisseurs de LLM (OpenAI, Mistral, modèle local).
-3. Résumé par le LLM de chaque case fusionnée.
-4. Passer le stockage à IndexedDB, avec import et export de fichiers.
+1. Sync and sharing with Supabase (data encrypted on the device): premium feature.
+2. Other LLM providers (OpenAI, Mistral, local models).
+3. LLM-generated summary for each merged node.
+4. Move storage to IndexedDB, with file import and export.
 
-## Licence
+## License
 
-À choisir avant publication. AGPL-3.0 envisagée (modèle open core).
+To be chosen before release. AGPL-3.0 under consideration (open-core model).

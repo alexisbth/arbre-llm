@@ -1,10 +1,10 @@
-// Service worker : garde une copie des fichiers de l'appli pour qu'elle s'ouvre hors connexion.
-// Stratégie « réseau d'abord » : la version en ligne est toujours prise si elle est joignable.
+// Service worker: keeps a copy of the app's files so that it opens offline.
+// "Network first" strategy: the online version is always used when it can be reached.
 const VERSION = 'arbre-llm-v2';
 const FICHIERS = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {
-  // Chaque fichier est mis en cache séparément : un fichier absent (ex. icône PNG) ne bloque pas les autres.
+  // Each file is cached separately: a missing file (e.g. a PNG icon) does not block the others.
   e.waitUntil(caches.open(VERSION).then(c => Promise.all(FICHIERS.map(f => c.add(f).catch(() => {})))));
   self.skipWaiting();
 });
@@ -15,7 +15,7 @@ self.addEventListener('activate', e => {
 });
 
 self.addEventListener('fetch', e => {
-  // Uniquement les fichiers de l'appli : jamais les appels à une API de LLM.
+  // Only the app's own files: never calls to an LLM API.
   if (e.request.method !== 'GET' || new URL(e.request.url).origin !== location.origin) return;
   e.respondWith(
     fetch(e.request)

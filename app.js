@@ -1,37 +1,37 @@
-/* arbre-llm — preuve de concept (POC), v3
+/* arbre-llm — proof of concept (POC), v3
  *
- * Démarche générale
- * 1. Données : une liste plate de nœuds { id, parent, q, a, kw, sum, ico }.
- *    q = question, a = réponse, kw = mot-clé, sum = résumé court, ico = emoji facultatif.
- *    Le champ « parent » suffit à décrire tout l'arbre.
- * 2. Fusion : un groupe est une liste de nœuds d'un seul tenant, affichée comme une seule case.
- *    On calcule donc d'abord l'arbre « visible », dont les cases (unités) sont des nœuds ou des groupes.
- * 3. Disposition : y = profondeur ; x = rang des feuilles, chaque parent centré sur ses enfants.
- * 4. Dessin : un SVG reconstruit à chaque changement, avec une flèche au bout de chaque lien.
- * 5. Gestes : glisser = déplacer, pincer ou molette = zoomer, toucher = choisir (ou éclater un groupe).
- * 6. Panneau : fil de la conversation, contexte compact envoyé au LLM, jauges de tokens.
- * 7. LLM : avec une clé API Anthropic (gardée sur l'appareil), la question part à Claude avec le
- *    contexte compact ; la réponse s'affiche au fil de l'eau, puis un petit modèle remplit la fiche
- *    du nœud (mot-clé, emoji, résumé). Sans clé : réponses simulées (mode démo).
- * Sécurité : tout texte est inséré avec textContent (jamais innerHTML), aucun script tiers.
+ * Overall approach
+ * 1. Data: a flat list of nodes { id, parent, q, a, kw, sum, ico }.
+ *    q = question, a = answer, kw = keyword, sum = short summary, ico = optional emoji.
+ *    The "parent" field alone describes the whole tree.
+ * 2. Merging: a group is a connected list of nodes, displayed as a single box.
+ *    So we first compute the "visible" tree, whose boxes (units) are nodes or groups.
+ * 3. Layout: y = depth; x = leaf rank, each parent centred above its children.
+ * 4. Drawing: an SVG rebuilt on every change, with an arrow at the end of each link.
+ * 5. Gestures: drag = pan, pinch or wheel = zoom, tap = select (or expand a group).
+ * 6. Panel: conversation thread, compact context sent to the LLM, token gauges.
+ * 7. LLM: with an Anthropic API key (kept on the device), the question is sent to Claude with the
+ *    compact context; the answer streams in, then a small model fills in the node's card
+ *    (keyword, emoji, summary). Without a key: simulated answers (demo mode).
+ * Security: all text is inserted with textContent (never innerHTML), no third-party script.
  */
 {
-  // ---------- Paramètres ----------
-  const NB_ECHANGES_COMPLETS = 2;      // derniers échanges du chemin envoyés en entier au LLM
-  const CARACTERES_PAR_TOKEN = 4;      // estimation grossière : 1 token ≈ 4 caractères
-  const FENETRES = [200000, 128000, 32000, 100];    // tailles de contexte proposées (100 : minuscule, pour voir l'alerte dans la démo)
-  const SEUIL_ALERTE = 0.8;            // part de la fenêtre à partir de laquelle la jauge passe à l'orange
-  const ECART_X = 160;                 // écart horizontal entre deux feuilles (px)
-  const ECART_Y = 100;                 // écart vertical entre deux niveaux (px)
+  // ---------- Settings ----------
+  const NB_ECHANGES_COMPLETS = 2;      // last exchanges of the path sent in full to the LLM
+  const CARACTERES_PAR_TOKEN = 4;      // rough estimate: 1 token ≈ 4 characters
+  const FENETRES = [200000, 128000, 32000, 100];    // context sizes offered (100: tiny, to see the alert in the demo)
+  const SEUIL_ALERTE = 0.8;            // share of the window above which the gauge turns orange
+  const ECART_X = 160;                 // horizontal gap between two leaves (px)
+  const ECART_Y = 100;                 // vertical gap between two levels (px)
   const LARGEUR_NOEUD = 140;
   const HAUTEUR_NOEUD = 40;
-  const RECUL_FLECHE = 7;              // la ligne s'arrête avant la case pour laisser la place à la pointe
-  const DECALAGE_PILE = 5;             // décalage de la case « ombre » d'un groupe
-  const LONGUEUR_MOT_CLE = 14;         // caractères affichés dans une case
+  const RECUL_FLECHE = 7;              // the line stops before the box to leave room for the arrowhead
+  const DECALAGE_PILE = 5;             // offset of a group's "shadow" box
+  const LONGUEUR_MOT_CLE = 14;         // characters shown in a box
   const LONGUEUR_RESUME = 90;
   const ZOOM_MIN = 0.2, ZOOM_MAX = 3, ZOOM_MAX_CADRAGE = 1.2;
   const SENSIBILITE_MOLETTE = 0.0015;
-  const SEUIL_TOUCHER = 8;             // px : en dessous, le geste est un toucher et non un glissement
+  const SEUIL_TOUCHER = 8;             // px: below this, the gesture is a tap, not a drag
   const DELAI_REPONSE_SIMULEE = 600;   // ms
   const DELAI_CONFIRMATION = 3000;     // ms
   const DUREE_TOAST = 2200;            // ms
@@ -39,24 +39,24 @@
   const RACINE = 'racine';
   const SELECTION_INITIALE = 'n3';
 
-  // ---------- LLM : Claude via l'API Anthropic ----------
+  // ---------- LLM: Claude through the Anthropic API ----------
   const API_URL = 'https://api.anthropic.com/v1/messages';
   const API_VERSION = '2026-10-21';
-  const MODELES = [                    // [identifiant, libellé] ; le premier est le modèle par défaut
+  const MODELES = [                    // [id, label]; the first one is the default model
     ['claude-sonnet-5-5', 'Sonnet 5.5 (équilibré)'],
     ['claude-haiku-5-5', 'Haiku 5.5 (rapide, économique)'],
     ['claude-opus-5-5', 'Opus 5.5 (le plus puissant)'],
   ];
-  const MODELE_FICHE = 'claude-haiku-5-5';   // petit modèle pour le mot-clé, l'emoji et le résumé
+  const MODELE_FICHE = 'claude-haiku-5-5';   // small model for the keyword, emoji and summary
   const MAX_TOKENS_REPONSE = 4096;
   const MAX_TOKENS_FICHE = 300;
-  const LONGUEUR_MAX_FICHE = 6000;     // caractères de la réponse transmis pour faire la fiche
-  const LONGUEUR_MOT_CLE_MAX = 30;     // caractères gardés pour un mot-clé produit par le LLM
+  const LONGUEUR_MAX_FICHE = 6000;     // characters of the answer sent to build the card
+  const LONGUEUR_MOT_CLE_MAX = 30;     // characters kept for an LLM-generated keyword
   const CLE_REGLAGES = 'arbre-llm-reglages';
   const CONSIGNE = "Tu réponds dans une application de conversation en arbre. Réponds dans la langue de la question, " +
     "en texte brut, sans Markdown ni LaTeX : écris les formules en notation lisible (Unicode) et définis chaque notation.";
 
-  // ---------- Arbre d'exemple (réponses écrites à la main) ----------
+  // ---------- Example tree (hand-written answers) ----------
   const EXEMPLE = [
     { id: RACINE, parent: null, ico: '🌱', kw: 'Début', q: '', a: '', sum: 'Début de la conversation.' },
     { id: 'n1', parent: RACINE, ico: '⚖️', kw: 'CVA', q: "Qu'est-ce que la CVA ?",
@@ -82,8 +82,8 @@
       sum: 'Plan XVA en trois parties pour un master 2.' },
   ];
 
-  // Icônes provisoires pour les nouvelles questions : racine de mot (sans accent) → emoji.
-  // Avec une clé API, l'emoji est ensuite remplacé par celui que choisit le LLM.
+  // Temporary icons for new questions: word stem (without accents) → emoji.
+  // With an API key, the emoji is then replaced by the one the LLM chooses.
   const ICONES = [
     ['arbre', '🌳'], ['foret', '🌲'], ['cours', '🎓'], ['ecole', '🎓'], ['etudiant', '🎓'], ['banque', '🏦'],
     ['argent', '💶'], ['prix', '💶'], ['cout', '💶'], ['risque', '⚠️'], ['calcul', '🧮'], ['formule', '🧮'],
@@ -95,7 +95,7 @@
     ['mail', '✉️'],
   ];
 
-  // ---------- Outils ----------
+  // ---------- Helpers ----------
   const $ = id => document.getElementById(id);
   const SVGNS = 'http://www.w3.org/2000/svg';
   const copie = x => JSON.parse(JSON.stringify(x));
@@ -123,51 +123,51 @@
     minuteurToast = setTimeout(() => t.classList.remove('on'), DUREE_TOAST);
   }
 
-  // ---------- Stockage local (reste sur l'appareil) ----------
+  // ---------- Local storage (stays on the device) ----------
   function charger() {
     try {
       const e = JSON.parse(localStorage.getItem(CLE_STOCKAGE));
       if (e && Array.isArray(e.noeuds) && e.noeuds.some(n => n.id === RACINE)) return e;
-    } catch { /* stockage indisponible : on repart de l'exemple */ }
+    } catch { /* storage unavailable: start again from the example */ }
     return null;
   }
   function sauver() {
-    try { localStorage.setItem(CLE_STOCKAGE, JSON.stringify({ noeuds, selection, groupes, fenetre })); } catch { /* ignoré */ }
+    try { localStorage.setItem(CLE_STOCKAGE, JSON.stringify({ noeuds, selection, groupes, fenetre })); } catch { /* ignored */ }
   }
 
-  // ---------- État ----------
+  // ---------- State ----------
   const etat = charger() || {};
   let noeuds = etat.noeuds || copie(EXEMPLE);
   let selection = etat.selection || SELECTION_INITIALE;
-  let groupes = etat.groupes || [];            // [{ id, membres: [ids des nœuds fusionnés] }]
+  let groupes = etat.groupes || [];            // [{ id, membres: [ids of the merged nodes] }]
   let fenetre = FENETRES.includes(etat.fenetre) ? etat.fenetre : FENETRES[0];
-  for (const n of noeuds) {                    // réponse coupée par une fermeture de l'appli
+  for (const n of noeuds) {                    // answer cut off because the app was closed
     if (n.enCours) Object.assign(n, { enCours: false, erreur: true, a: n.a || 'Réponse interrompue.' });
   }
   let modeSelection = false;
-  const choixFusion = new Set();               // cases touchées en mode sélection
-  const vue = { x: 0, y: 0, k: 1 };            // translation (x, y) et échelle k de la carte
-  let S, P;                                    // arbre visible et positions, recalculés à chaque dessin
+  const choixFusion = new Set();               // boxes tapped in selection mode
+  const vue = { x: 0, y: 0, k: 1 };            // translation (x, y) and scale k of the map
+  let S, P;                                    // visible tree and positions, recomputed on every draw
 
-  // ---------- Lecture de l'arbre ----------
+  // ---------- Reading the tree ----------
   const noeud = id => noeuds.find(n => n.id === id);
   const enfants = id => noeuds.filter(n => n.parent === id);
-  function chemin(id) {                        // nœuds de la racine jusqu'à id
+  function chemin(id) {                        // nodes from the root down to id
     const c = [];
     for (let n = noeud(id); n; n = noeud(n.parent)) c.unshift(n);
     return c;
   }
   if (!noeud(selection)) selection = RACINE;
 
-  // Arbre visible : chaque nœud appartient à une case (lui-même, ou le groupe qui le contient)
+  // Visible tree: each node belongs to a box (itself, or the group that contains it)
   function structure() {
     const groupeDe = {};
     for (const g of groupes) for (const m of g.membres) groupeDe[m] = g;
     const unite = id => (groupeDe[id] ? groupeDe[id].id : id);
-    const unites = new Map();                  // id de case → { id, rep, groupe, parent }
+    const unites = new Map();                  // box id → { id, rep, groupe, parent }
     for (const n of noeuds) {
       const g = groupeDe[n.id];
-      const sommet = !g || !g.membres.includes(n.parent);   // nœud le plus haut de son groupe
+      const sommet = !g || !g.membres.includes(n.parent);   // topmost node of its group
       if (sommet) unites.set(unite(n.id), { id: unite(n.id), rep: n, groupe: g || null, parent: n.parent == null ? null : unite(n.parent) });
     }
     const enfantsU = {};
@@ -175,7 +175,7 @@
     return { unite, unites, enfantsU };
   }
 
-  // ---------- Disposition ----------
+  // ---------- Layout ----------
   function disposer(s) {
     const pos = {};
     let feuille = 0;
@@ -188,7 +188,7 @@
     return pos;
   }
 
-  // ---------- Dessin de la carte ----------
+  // ---------- Drawing the map ----------
   function dessiner() {
     S = structure();
     P = disposer(S);
@@ -228,7 +228,7 @@
       const titre = svgEl('title', {});
       titre.textContent = u.groupe ? membres.map(m => noeud(m).kw).join(' → ') : u.rep.kw;
       g.append(t, titre);
-      if (u.groupe) {                          // pastille « +N » : nombre de cases cachées
+      if (u.groupe) {                          // "+N" badge: number of hidden boxes
         g.append(svgEl('circle', { class: 'badge', cx: L / 2 - 4, cy: -H / 2 + 2, r: 13 }));
         const nb = svgEl('text', { class: 'nb', x: L / 2 - 4, y: -H / 2 + 2, 'text-anchor': 'middle', dy: '0.35em' });
         nb.textContent = '+' + (membres.length - 1);
@@ -243,14 +243,14 @@
     $('calque').setAttribute('transform', `translate(${vue.x},${vue.y}) scale(${vue.k})`);
   }
 
-  // Zone de la carte non couverte par la barre et le panneau
+  // Map area not covered by the top bar and the panel
   function zoneVisible() {
     const haut = $('barre').getBoundingClientRect().bottom;
     const p = $('panneau').getBoundingClientRect();
-    const lateral = p.top <= haut + 1;          // grand écran : panneau à droite
+    const lateral = p.top <= haut + 1;          // large screen: panel on the right
     return lateral ? { haut, w: p.left, h: innerHeight - haut } : { haut, w: innerWidth, h: p.top - haut };
   }
-  function cadrer() {                           // tout l'arbre visible
+  function cadrer() {                           // whole tree visible
     const pos = Object.values(P);
     const xs = pos.map(p => p.x), ys = pos.map(p => p.y);
     const x0 = Math.min(...xs) - LARGEUR_NOEUD, x1 = Math.max(...xs) + LARGEUR_NOEUD;
@@ -267,12 +267,12 @@
     vue.y = z.haut + z.h / 2 - p.y * vue.k;
     appliquerVue();
   }
-  function estVisible(id) {                     // la case est-elle dans la zone non couverte de l'écran ?
+  function estVisible(id) {                     // is the box in the uncovered part of the screen?
     const p = P[S.unite(id)], z = zoneVisible();
     const sx = p.x * vue.k + vue.x, sy = p.y * vue.k + vue.y;
     return sx > 0 && sx < z.w && sy > z.haut && sy < z.haut + z.h;
   }
-  function zoomerAutour(cx, cy, facteur) {      // zoom en gardant le point (cx, cy) fixe à l'écran
+  function zoomerAutour(cx, cy, facteur) {      // zoom while keeping point (cx, cy) fixed on screen
     const k = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, vue.k * facteur));
     const f = k / vue.k;
     vue.x = cx - (cx - vue.x) * f;
@@ -280,9 +280,9 @@
     vue.k = k;
   }
 
-  // ---------- Gestes sur la carte ----------
+  // ---------- Gestures on the map ----------
   const svg = $('carte');
-  const pointeurs = new Map();                  // doigts (ou souris) actuellement posés
+  const pointeurs = new Map();                  // fingers (or mouse) currently down
   let depart = null, pincement = null;
   const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
   const milieu = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
@@ -332,9 +332,9 @@
     zoomerAutour(e.clientX, e.clientY, Math.exp(-e.deltaY * SENSIBILITE_MOLETTE));
     appliquerVue();
   }, { passive: false });
-  document.addEventListener('gesturestart', e => e.preventDefault());   // Safari : bloque le zoom de page
+  document.addEventListener('gesturestart', e => e.preventDefault());   // Safari: block page zoom
 
-  // Toucher une case : choisir, éclater un groupe, ou cocher en mode sélection
+  // Tapping a box: select it, expand a group, or tick it in selection mode
   function toucher(idCase) {
     const u = S.unites.get(idCase);
     if (!u) return;
@@ -350,7 +350,7 @@
     choisir(u.id, false);
   }
 
-  // ---------- Sélection d'un nœud ----------
+  // ---------- Selecting a node ----------
   function choisir(id, recentrer) {
     selection = id;
     sauver();
@@ -358,13 +358,13 @@
     if (recentrer || !estVisible(id)) centrerSur(id);
   }
 
-  // ---------- Fusion et éclatement ----------
-  // Complète les cases cochées par celles qui les relient : on part de leur ancêtre commun
-  // le plus proche et on ajoute tous les nœuds des chemins qui en descendent jusqu'à elles.
+  // ---------- Merging and expanding ----------
+  // Adds to the ticked boxes the ones that connect them: start from their lowest common
+  // ancestor and add every node on the paths leading down from it to them.
   function completer() {
     const chemins = [...choixFusion].filter(noeud).map(id => chemin(id).map(n => n.id));
     if (!chemins.length) return new Set();
-    let k = 0;                                  // longueur du début commun à tous les chemins
+    let k = 0;                                  // length of the prefix shared by all paths
     while (chemins.every(c => k < c.length && c[k] === chemins[0][k])) k++;
     const groupe = new Set();
     for (const c of chemins) c.slice(k - 1).forEach(id => groupe.add(id));
@@ -386,7 +386,7 @@
     const membres = completer();
     if (membres.size < 2) { toast('Choisis au moins deux cases.'); return; }
     const autres = [];
-    for (const g of groupes) {                  // un groupe existant qui touche la sélection est absorbé
+    for (const g of groupes) {                  // an existing group that touches the selection is absorbed
       if (g.membres.some(m => membres.has(m))) g.membres.forEach(m => membres.add(m));
       else autres.push(g);
     }
@@ -402,7 +402,7 @@
     toast('Case éclatée');
   }
 
-  // ---------- Panneau : fil, contexte, jauges ----------
+  // ---------- Panel: thread, context, gauges ----------
   function remplirPanneau() {
     const n = noeud(selection);
     $('p-kw').textContent = etiquette(n);
@@ -447,16 +447,16 @@
   const tokens = nbCar => Math.ceil(nbCar / CARACTERES_PAR_TOKEN);
   const somme = (liste, f) => liste.reduce((s, n) => s + f(n), 0);
   const tailleEchange = n => n.q.length + n.a.length;
-  // Tokens d'un échange : nombre réel renvoyé par l'API pour la réponse s'il est connu, sinon estimation
+  // Tokens of an exchange: actual answer count returned by the API when known, otherwise an estimate
   const tokensEchange = n => (n.usage ? tokens(n.q.length) + n.usage.sortie : tokens(tailleEchange(n)));
 
-  // Découpe d'un chemin : étapes anciennes (résumé seulement) et NB_ECHANGES_COMPLETS derniers échanges
+  // Splits a path: earlier steps (summary only) and the last NB_ECHANGES_COMPLETS exchanges
   function decouper(c) {
     const coupe = Math.max(0, c.length - NB_ECHANGES_COMPLETS);
     return { resumes: c.slice(0, coupe), complets: c.slice(coupe) };
   }
 
-  // Contexte compact : résumé des étapes anciennes + NB_ECHANGES_COMPLETS derniers échanges en entier
+  // Compact context: summary of earlier steps + the last NB_ECHANGES_COMPLETS exchanges in full
   function remplirContexte(c) {
     const ctx = $('ctx');
     ctx.textContent = '';
@@ -493,7 +493,7 @@
       `Règle : les ${NB_ECHANGES_COMPLETS} derniers échanges en entier, le résumé des précédents, rien des branches voisines. Estimation : 1 token ≈ ${CARACTERES_PAR_TOKEN} caractères.`));
   }
 
-  // Deux jauges : tokens du chemin en cours et de tout l'arbre, rapportés à la fenêtre du modèle
+  // Two gauges: tokens of the current path and of the whole tree, relative to the model's window
   function remplirJauges(c) {
     const ratioChemin = majJauge('j-chemin', somme(c, tokensEchange));
     majJauge('j-arbre', somme(noeuds, tokensEchange));
@@ -514,7 +514,7 @@
     toast(`Contexte maximal du modèle : ${formatCompact.format(fenetre)} tokens`);
   });
 
-  // Repartir du résumé : nouvelle conversation dont le point de départ est le résumé du chemin
+  // Restart from the summary: a new conversation whose starting point is the path's summary
   $('b-repartir').addEventListener('click', () => {
     const origine = noeud(selection);
     const c = chemin(selection).filter(m => m.id !== RACINE);
@@ -547,16 +547,16 @@
     });
   }));
 
-  // ---------- Nouvelle question ----------
+  // ---------- New question ----------
   const MOTS_VIDES = new Set(['comment', 'pourquoi', 'quelle', 'quelles', 'quels', 'quel', 'dans', 'avec',
     'pour', 'sans', 'faire', 'peux', 'peut', 'cette', 'entre', 'sont', 'what', 'with', 'that', 'this', 'does', 'from']);
-  function motCle(q) {                // provisoire : le mot significatif le plus long (remplacé par la fiche du LLM)
+  function motCle(q) {                // temporary: the longest meaningful word (replaced by the LLM's card)
     const mots = q.match(/[\p{L}\p{N}'-]+/gu) || [];
     const m = mots.filter(w => w.length >= 4 && !MOTS_VIDES.has(w.toLowerCase()))
       .sort((a, b) => b.length - a.length)[0] || mots[0] || 'Question';
     return m[0].toUpperCase() + m.slice(1);
   }
-  function icone(q) {                 // provisoire : premier mot reconnu dans ICONES, sinon pas d'icône
+  function icone(q) {                 // temporary: first word found in ICONES, otherwise no icon
     const mots = sansAccents(q.toLowerCase()).match(/[a-z0-9]+/g) || [];
     for (const [racine, ico] of ICONES) {
       if (mots.some(m => (racine.length <= 3 ? m === racine : m.startsWith(racine)))) return ico;
@@ -580,7 +580,7 @@
     e.preventDefault();
     const q = champ.value.trim();
     if (!q) return;
-    // Mot-clé, icône et résumé provisoires, remplacés par la fiche du LLM une fois la réponse reçue
+    // Temporary keyword, icon and summary, replaced by the LLM's card once the answer has arrived
     const n = { id: 'n' + nouvelId(), parent: selection, q, a: '',
       ico: icone(q), kw: motCle(q), sum: 'Question : ' + abreger(q, LONGUEUR_RESUME) };
     noeuds.push(n);
@@ -590,7 +590,7 @@
     choisir(n.id, true);
   });
 
-  // ---------- Réponse : Claude si une clé est réglée, sinon réponse simulée ----------
+  // ---------- Answer: Claude if a key is set, otherwise a simulated answer ----------
   async function repondre(n) {
     Object.assign(n, { enCours: true, erreur: false, a: '' });
     delete n.usage;
@@ -608,7 +608,7 @@
       n.enCours = false;
       sauver();
       if (selection === n.id) remplirPanneau();
-      try { await ficherEchange(n); } catch { /* fiche facultative : on garde le mot-clé provisoire */ }
+      try { await ficherEchange(n); } catch { /* card is optional: keep the temporary keyword */ }
     } catch (err) {
       Object.assign(n, { enCours: false, erreur: true, a: '⚠️ ' + err.message });
       toast('Le LLM a renvoyé une erreur');
@@ -622,19 +622,19 @@
       'content-type': 'application/json',
       'x-api-key': reglages.cle,
       'anthropic-version': API_VERSION,
-      'anthropic-dangerous-direct-browser-access': 'true',   // autorise l'appel direct depuis un navigateur
+      'anthropic-dangerous-direct-browser-access': 'true',   // allows calling the API directly from a browser
     };
     if (reglages.espace) h['anthropic-workspace-id'] = reglages.espace;
     return h;
   }
   async function erreurApi(r) {
     let msg = `Erreur ${r.status}`;
-    try { const j = await r.json(); if (j.error?.message) msg += ' : ' + j.error.message; } catch { /* corps illisible */ }
+    try { const j = await r.json(); if (j.error?.message) msg += ' : ' + j.error.message; } catch { /* unreadable body */ }
     if (r.status === 401) msg += ' (clé API refusée : vérifie-la dans les réglages)';
     return new Error(msg);
   }
 
-  // Requête : consigne + résumé des étapes anciennes, puis les derniers échanges en entier, puis la question
+  // Request: instruction + summary of earlier steps, then the last exchanges in full, then the question
   function construireRequete(n) {
     const c = chemin(n.parent).filter(m => m.id !== RACINE);
     const { resumes, complets } = decouper(c);
@@ -650,7 +650,7 @@
     return { system: systeme, messages };
   }
 
-  // Appel en flux (« streaming ») : la réponse s'affiche au fur et à mesure qu'elle arrive
+  // Streaming call: the answer is displayed as it arrives
   async function demanderClaude(n) {
     const r = await fetch(API_URL, {
       method: 'POST', headers: enTetes(),
@@ -665,7 +665,7 @@
       if (done) break;
       tampon += decodeur.decode(value, { stream: true }).replace(/\r/g, '');
       const evenements = tampon.split('\n\n');
-      tampon = evenements.pop();                  // dernier morceau éventuellement incomplet
+      tampon = evenements.pop();                  // last chunk, possibly incomplete
       for (const ev of evenements) {
         const ligne = ev.split('\n').find(l => l.startsWith('data:'));
         if (!ligne) continue;
@@ -674,16 +674,16 @@
         else if (d.type === 'content_block_delta' && d.delta.type === 'text_delta') { n.a += d.delta.text; afficherFlux(n); }
         else if (d.type === 'message_delta' && d.usage) n.usage.sortie = d.usage.output_tokens;
         else if (d.type === 'error') throw new Error(d.error.message);
-      }                                            // les autres événements (ping…) sont ignorés
+      }                                            // other events (ping…) are ignored
     }
   }
-  function afficherFlux(n) {                     // met à jour seulement le texte de la réponse
+  function afficherFlux(n) {                     // updates only the answer text
     if (selection !== n.id) return;
     const p = document.querySelector(`#fil [data-id="${CSS.escape(n.id)}"] .a`);
     if (p) p.textContent = n.a;
   }
 
-  // Fiche du nœud : le petit modèle est obligé de répondre via un « outil » au format imposé
+  // Node card: the small model is forced to answer through a "tool" with a fixed format
   const OUTIL_FICHE = {
     name: 'fiche',
     description: "Fiche de synthèse d'un échange question-réponse",
@@ -710,18 +710,18 @@
     const f = (await r.json()).content?.find(b => b.type === 'tool_use')?.input;
     if (!f) return;
     if (f.mot_cle) n.kw = abreger(String(f.mot_cle), LONGUEUR_MOT_CLE_MAX);
-    n.ico = [...String(f.emoji || '')].slice(0, 4).join('');   // un emoji peut compter plusieurs caractères
+    n.ico = [...String(f.emoji || '')].slice(0, 4).join('');   // an emoji can span several characters
     if (f.resume) n.sum = String(f.resume);
   }
 
-  // ---------- Réglages du LLM (clé gardée sur l'appareil uniquement) ----------
+  // ---------- LLM settings (key kept on the device only) ----------
   function chargerReglages() {
     const defaut = { cle: '', modele: MODELES[0][0], espace: '', retenir: false };
     try { return { ...defaut, ...JSON.parse(localStorage.getItem(CLE_REGLAGES)) }; } catch { return defaut; }
   }
   function sauverReglages() {
-    const aStocker = { ...reglages, cle: reglages.retenir ? reglages.cle : '' };   // sans « Garder », la clé reste en mémoire vive
-    try { localStorage.setItem(CLE_REGLAGES, JSON.stringify(aStocker)); } catch { /* ignoré */ }
+    const aStocker = { ...reglages, cle: reglages.retenir ? reglages.cle : '' };   // without "Garder", the key stays in memory only
+    try { localStorage.setItem(CLE_REGLAGES, JSON.stringify(aStocker)); } catch { /* ignored */ }
   }
   let reglages = chargerReglages();
   if (!MODELES.some(([id]) => id === reglages.modele)) reglages.modele = MODELES[0][0];
@@ -756,7 +756,7 @@
   $('r-effacer').addEventListener('click', () => { $('r-cle').value = ''; });
   $('r-fermer').addEventListener('click', () => $('reglages').close());
 
-  // ---------- Barre du haut ----------
+  // ---------- Top bar ----------
   function fermerMenu() {
     $('menu').hidden = true;
     $('b-menu').setAttribute('aria-expanded', 'false');
@@ -784,7 +784,7 @@
   let attenteReinit = null;
   $('b-reinit').addEventListener('click', e => {
     const b = e.currentTarget;
-    if (!attenteReinit) {               // premier appui : demande de confirmation
+    if (!attenteReinit) {               // first tap: ask for confirmation
       b.textContent = 'Confirmer ?';
       attenteReinit = setTimeout(() => { b.textContent = 'Réinitialiser'; attenteReinit = null; }, DELAI_CONFIRMATION);
       return;
@@ -802,14 +802,14 @@
     toast("Arbre d'exemple rétabli");
   });
 
-  // ---------- Démarrage ----------
+  // ---------- Startup ----------
   $('sous-titre').textContent = libelleMode();
   dessiner();
   requestAnimationFrame(cadrer);
-  addEventListener('resize', () => centrerSur(selection));   // ex. ouverture du clavier
+  addEventListener('resize', () => centrerSur(selection));   // e.g. the keyboard opening
 
-  // Mode hors connexion (PWA) : ignoré là où les service workers sont interdits
+  // Offline mode (PWA): skipped where service workers are not allowed
   try {
     if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
-  } catch { /* ignoré */ }
+  } catch { /* ignored */ }
 }
