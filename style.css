@@ -1,0 +1,180 @@
+/* VOICE   : outil de travail, calme et précis
+   IDEA    : un plan de métro — chaque question est une station, chaque branche une ligne
+   PICTURE : l'arbre lui-même, plein écran
+   COLOUR and TYPE : blanc, encre #101418, jaune #ffd84a pour le nœud actif ; police système
+   LAYOUT  : carte plein écran, barre fine en haut, panneau coulissant en bas (à droite sur grand écran) */
+
+:root {
+  color-scheme: light dark;
+  --bg: light-dark(#ffffff, #101418);
+  --ink: light-dark(#101418, #eef1f4);
+  --slate: light-dark(#5d6873, #98a3ae);
+  --line: light-dark(#d3d9df, #2e3740);
+  --card: light-dark(#f3f5f7, #182028);
+  --acc: #ffd84a;
+  --acc-ink: #101418;
+}
+:root[data-theme=light] { color-scheme: light }
+:root[data-theme=dark] { color-scheme: dark }
+
+* { box-sizing: border-box; min-width: 0 }
+html, body { height: 100% }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  overflow: hidden; overscroll-behavior: none;
+}
+button, textarea { font: inherit; color: inherit }
+button {
+  min-height: 44px; padding: 0 14px; border: 1px solid var(--line);
+  border-radius: 22px; background: var(--bg); cursor: pointer;
+}
+button:focus-visible, textarea:focus-visible { outline: 3px solid var(--acc); outline-offset: 2px }
+
+/* ---- Barre du haut ---- */
+#barre {
+  position: fixed; inset: 0 0 auto; z-index: 2;
+  display: flex; align-items: center; gap: 6px;
+  padding: calc(env(safe-area-inset-top) + 6px) max(12px, env(safe-area-inset-right)) 6px max(12px, env(safe-area-inset-left));
+  background: color-mix(in srgb, var(--bg) 90%, transparent);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+#barre h1 { margin: 0 auto 0 0; font-size: 20px; line-height: 1.1; font-weight: 800 }
+#barre h1 small { display: block; font-size: 13px; font-weight: 500; color: var(--slate); white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+#barre button { font-size: 14px; padding: 0 10px; white-space: nowrap; flex: none }
+#b-menu { min-width: 44px; font-size: 18px; font-weight: 800 }
+#b-fusionner, #b-repartir { background: var(--acc); color: var(--acc-ink); border-color: var(--acc-ink); font-weight: 700 }
+.en-selection { display: none }
+body.mode-selection #barre .hors-selection { display: none }
+body.mode-selection #barre .en-selection { display: inline-block }
+#menu {
+  position: absolute; top: 100%; right: 12px; margin-top: 6px; padding: 8px;
+  display: grid; gap: 6px; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 8px 24px rgb(0 0 0 / .12);
+}
+#menu[hidden] { display: none }
+
+/* ---- Carte ---- */
+#carte {
+  position: fixed; inset: 0; width: 100%; height: 100%;
+  touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab;
+}
+.lien { fill: none; stroke: var(--line); stroke-width: 4; stroke-linecap: round }
+.lien.actif { stroke: var(--ink); stroke-width: 6 }
+.pointe { fill: var(--line) }
+.pointe-actif { fill: var(--ink) }
+.noeud { cursor: pointer }
+.noeud .fond { fill: var(--bg); stroke: var(--line); stroke-width: 2 }
+.noeud .pile { fill: var(--card); stroke: var(--line); stroke-width: 2 }
+.noeud text { font-size: 15px; font-weight: 600; fill: var(--ink); pointer-events: none }
+.noeud.chemin .fond, .noeud.chemin .pile { stroke: var(--ink); stroke-width: 3 }
+.noeud.choisi .fond { fill: var(--acc); stroke: var(--acc-ink); stroke-width: 3 }
+.noeud.choisi text { fill: var(--acc-ink); font-weight: 800 }
+.noeud.racine .fond { fill: var(--ink); stroke: var(--ink) }
+.noeud.racine text { fill: var(--bg) }
+.noeud.racine.choisi .fond { fill: var(--acc); stroke: var(--acc-ink) }
+.noeud.racine.choisi text { fill: var(--acc-ink) }
+.noeud .badge { fill: var(--ink); stroke: var(--bg); stroke-width: 2 }
+.noeud text.nb { font-size: 12px; font-weight: 800; fill: var(--bg) }
+/* Mode sélection : cases cochées (pointillés) et cases ajoutées automatiquement (plus pâles) */
+.noeud.coche .fond { fill: color-mix(in srgb, var(--acc) 50%, var(--bg)); stroke: var(--ink); stroke-width: 3; stroke-dasharray: 7 4 }
+.noeud.coche.auto .fond { fill: color-mix(in srgb, var(--acc) 20%, var(--bg)); stroke-width: 2 }
+.noeud.coche text:not(.nb) { fill: var(--ink) }
+
+/* ---- Panneau du bas ---- */
+#panneau {
+  position: fixed; inset: auto 0 0; z-index: 3;
+  display: flex; flex-direction: column; max-height: 68vh;
+  background: var(--bg); border-top: 1px solid var(--line);
+  border-radius: 18px 18px 0 0; box-shadow: 0 -8px 24px rgb(0 0 0 / .08);
+  padding: 0 max(12px, env(safe-area-inset-right)) calc(env(safe-area-inset-bottom) + 10px) max(12px, env(safe-area-inset-left));
+}
+#poignee, #saisie { flex: none }
+#poignee {
+  position: relative; display: block; width: 100%; min-height: 0;
+  padding: 18px 4px 10px; border: 0; border-radius: 0; background: none; text-align: left;
+}
+#poignee::before {
+  content: ""; position: absolute; top: 7px; left: 50%; width: 40px; height: 4px;
+  margin-left: -20px; border-radius: 2px; background: var(--line);
+}
+#p-kw { display: block; font-size: 18px; font-weight: 800; line-height: 1.2 }
+#p-sum { display: block; font-size: 14px; color: var(--slate); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+#panneau:not(.replie) #p-sum { white-space: normal }
+#corps { flex: 1 1 auto; min-height: 0; overflow: auto; padding-bottom: 8px }
+.replie #corps { display: none }
+
+.onglets { display: flex; gap: 6px; margin: 2px 0 12px }
+.onglets button { font-size: 14px }
+.onglets button[aria-selected=true] { background: var(--ink); color: var(--bg); border-color: var(--ink) }
+
+.echange { margin: 0 0 10px; padding: 8px 12px; border-left: 4px solid var(--line); cursor: pointer }
+.echange.courant { border-left-color: var(--acc); background: var(--card); border-radius: 0 10px 10px 0 }
+.echange .kw { margin: 0; font-size: 13px; font-weight: 700; color: var(--slate) }
+.echange .q { margin: 2px 0 4px; font-weight: 650 }
+.echange .a { margin: 0; white-space: pre-wrap }
+.fleche-fil { margin: -6px 0 4px 16px; font-size: 18px; line-height: 1; color: var(--slate) }
+.suites { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0 8px }
+.suites p { width: 100%; margin: 0; font-size: 13px; color: var(--slate) }
+.suites button { font-size: 14px }
+
+#ctx h3 { margin: 14px 0 6px; font-size: 15px }
+#ctx ul { margin: 0; padding-left: 20px }
+#ctx .echange { cursor: default }
+.stat { padding: 12px 14px; border-radius: 12px; background: var(--card) }
+.stat p { margin: 0 }
+.chiffre { font-size: 26px; font-weight: 800; line-height: 1.2 }
+.chiffre mark { padding: 0 6px; border-radius: 4px; background: var(--acc); color: var(--acc-ink) }
+.note, .vide { font-size: 13px; color: var(--slate) }
+
+#saisie { display: flex; align-items: flex-end; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line) }
+#question {
+  flex: 1; min-height: 44px; max-height: 120px; resize: none;
+  padding: 10px 12px; font-size: 16px;
+  border: 1px solid var(--line); border-radius: 14px; background: var(--card);
+}
+#saisie button { background: var(--ink); color: var(--bg); border-color: var(--ink); font-weight: 700 }
+
+/* ---- Jauges de tokens (coin bas droit de la carte) ---- */
+#coin {
+  position: absolute; right: max(12px, env(safe-area-inset-right)); bottom: 100%; margin-bottom: 10px;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 6px; pointer-events: none;
+}
+#coin > * { pointer-events: auto }
+#coin [hidden] { display: none }
+#jauges {
+  display: grid; gap: 5px; width: 200px; min-height: 0; padding: 8px 10px;
+  border-radius: 12px; text-align: left; font-size: 12px;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+.jauge { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 6px; color: var(--slate) }
+.jauge .barre { height: 5px; border-radius: 3px; background: var(--line); overflow: hidden }
+.jauge .barre i { display: block; width: 0; min-width: 2px; height: 100%; border-radius: 3px; background: var(--ink) }
+.jauge .val { white-space: nowrap; font-variant-numeric: tabular-nums }
+.jauge.alerte .barre i { background: #e8590c }
+.jauge.alerte .val { color: #e8590c; font-weight: 700 }
+#b-repartir { font-size: 14px }
+@media (max-width: 899px) { #panneau:not(.replie) #coin { display: none } }   /* panneau ouvert : la carte est petite */
+
+#toast {
+  position: fixed; left: 50%; top: calc(env(safe-area-inset-top) + 72px); z-index: 5;
+  padding: 8px 14px; border-radius: 20px; background: var(--ink); color: var(--bg); font-size: 14px;
+  opacity: 0; transform: translate(-50%, -8px); transition: opacity .2s, transform .2s; pointer-events: none;
+}
+#toast.on { opacity: 1; transform: translate(-50%, 0) }
+
+/* Grand écran : panneau fixe à droite, toujours ouvert */
+@media (min-width: 900px) {
+  #panneau {
+    inset: 0 0 0 auto; width: 420px; max-height: none; padding-top: 70px;
+    border-top: 0; border-left: 1px solid var(--line); border-radius: 0; box-shadow: none;
+  }
+  #poignee::before { display: none }
+  .replie #corps { display: block }
+  #panneau #p-sum { white-space: normal }
+  #barre { right: 420px }
+  #coin { position: fixed; right: 436px; bottom: 16px; margin: 0 }
+}
+@media (prefers-reduced-motion: reduce) { #toast { transition: none } }

@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Arbre LLM</title>
+<meta name="theme-color" content="#101418">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header id="barre">
+  <h1>Arbre <small id="sous-titre">POC · sans LLM</small></h1>
+  <button id="b-selection" class="hors-selection" type="button">Sélection</button>
+  <button id="b-cadrer" class="hors-selection" type="button">Cadrer</button>
+  <button id="b-menu" class="hors-selection" type="button" aria-label="Plus d'actions" aria-haspopup="true" aria-expanded="false">⋯</button>
+  <button id="b-fusionner" class="en-selection" type="button">Fusionner</button>
+  <button id="b-annuler" class="en-selection" type="button">Annuler</button>
+  <div id="menu" hidden>
+    <button id="b-export" type="button">Copier en JSON</button>
+    <button id="b-reinit" type="button">Réinitialiser</button>
+  </div>
+</header>
+
+<svg id="carte" role="img" aria-label="Carte de la conversation">
+  <defs>
+    <marker id="fleche" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="13" markerHeight="13" markerUnits="userSpaceOnUse" orient="auto">
+      <path class="pointe" d="M0,0 L10,5 L0,10 z"/>
+    </marker>
+    <marker id="fleche-actif" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="15" markerHeight="15" markerUnits="userSpaceOnUse" orient="auto">
+      <path class="pointe-actif" d="M0,0 L10,5 L0,10 z"/>
+    </marker>
+  </defs>
+  <g id="calque"></g>
+</svg>
+
+<section id="panneau" class="replie">
+  <div id="coin">
+    <button id="b-repartir" type="button" hidden>Repartir du résumé</button>
+    <button id="jauges" type="button" aria-label="Tokens utilisés. Toucher pour changer la taille de contexte du modèle.">
+      <span class="jauge" id="j-chemin"><span>Chemin</span><span class="barre"><i></i></span><span class="val"></span></span>
+      <span class="jauge" id="j-arbre"><span>Arbre</span><span class="barre"><i></i></span><span class="val"></span></span>
+    </button>
+  </div>
+  <button id="poignee" type="button" aria-expanded="false" aria-controls="corps">
+    <span id="p-kw"></span>
+    <span id="p-sum"></span>
+  </button>
+  <div id="corps">
+    <div class="onglets" role="tablist">
+      <button type="button" role="tab" data-onglet="fil" aria-selected="true">Fil</button>
+      <button type="button" role="tab" data-onglet="ctx" aria-selected="false">Contexte LLM</button>
+    </div>
+    <div id="fil" role="tabpanel"></div>
+    <div id="ctx" role="tabpanel" hidden></div>
+  </div>
+  <form id="saisie">
+    <textarea id="question" rows="1" aria-label="Nouvelle question"></textarea>
+    <button type="submit">Envoyer</button>
+  </form>
+</section>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

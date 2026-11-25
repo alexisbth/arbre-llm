@@ -1,0 +1,611 @@
+/* arbre-llm — preuve de concept (POC), v2
+ *
+ * Démarche générale
+ * 1. Données : une liste plate de nœuds { id, parent, q, a, kw, sum, ico }.
+ *    q = question, a = réponse, kw = mot-clé, sum = résumé court, ico = emoji facultatif.
+ *    Le champ « parent » suffit à décrire tout l'arbre.
+ * 2. Fusion : un groupe est une liste de nœuds d'un seul tenant, affichée comme une seule case.
+ *    On calcule donc d'abord l'arbre « visible », dont les cases (unités) sont des nœuds ou des groupes.
+ * 3. Disposition : y = profondeur ; x = rang des feuilles, chaque parent centré sur ses enfants.
+ * 4. Dessin : un SVG reconstruit à chaque changement, avec une flèche au bout de chaque lien.
+ * 5. Gestes : glisser = déplacer, pincer ou molette = zoomer, toucher = choisir (ou éclater un groupe).
+ * 6. Panneau : fil de la conversation, contexte compact envoyé au LLM, jauges de tokens.
+ * Aucun LLM n'est appelé : les réponses sont simulées.
+ * Sécurité : tout texte est inséré avec textContent (jamais innerHTML), aucun script tiers.
+ */
+{
+  // ---------- Paramètres ----------
+  const NB_ECHANGES_COMPLETS = 2;      // derniers échanges du chemin envoyés en entier au LLM
+  const CARACTERES_PAR_TOKEN = 4;      // estimation grossière : 1 token ≈ 4 caractères
+  const FENETRES = [200000, 128000, 32000, 100];    // tailles de contexte proposées (100 : minuscule, pour voir l'alerte dans la démo)
+  const SEUIL_ALERTE = 0.8;            // part de la fenêtre à partir de laquelle la jauge passe à l'orange
+  const ECART_X = 160;                 // écart horizontal entre deux feuilles (px)
+  const ECART_Y = 100;                 // écart vertical entre deux niveaux (px)
+  const LARGEUR_NOEUD = 140;
+  const HAUTEUR_NOEUD = 40;
+  const RECUL_FLECHE = 7;              // la ligne s'arrête avant la case pour laisser la place à la pointe
+  const DECALAGE_PILE = 5;             // décalage de la case « ombre » d'un groupe
+  const LONGUEUR_MOT_CLE = 14;         // caractères affichés dans une case
+  const LONGUEUR_RESUME = 90;
+  const ZOOM_MIN = 0.2, ZOOM_MAX = 3, ZOOM_MAX_CADRAGE = 1.2;
+  const SENSIBILITE_MOLETTE = 0.0015;
+  const SEUIL_TOUCHER = 8;             // px : en dessous, le geste est un toucher et non un glissement
+  const DELAI_REPONSE_SIMULEE = 600;   // ms
+  const DELAI_CONFIRMATION = 3000;     // ms
+  const DUREE_TOAST = 2200;            // ms
+  const CLE_STOCKAGE = 'arbre-llm-v2';
+  const RACINE = 'racine';
+  const SELECTION_INITIALE = 'n3';
+
+  // ---------- Arbre d'exemple (réponses écrites à la main) ----------
+  const EXEMPLE = [
+    { id: RACINE, parent: null, ico: '🌱', kw: 'Début', q: '', a: '', sum: 'Début de la conversation.' },
+    { id: 'n1', parent: RACINE, ico: '⚖️', kw: 'CVA', q: "Qu'est-ce que la CVA ?",
+      a: "La CVA (Credit Valuation Adjustment) est l'ajustement de valeur d'un portefeuille de dérivés lié au risque de défaut de la contrepartie : c'est le prix de ce risque.",
+      sum: 'Définition : la CVA est le prix du risque de défaut de la contrepartie.' },
+    { id: 'n2', parent: 'n1', ico: '🧮', kw: 'Calcul CVA', q: 'Comment la calcule-t-on ?',
+      a: "CVA = (1 − R) × Σᵢ EE(tᵢ) × PD(tᵢ₋₁, tᵢ) × DF(tᵢ)\nR : taux de recouvrement ; EE(tᵢ) : exposition attendue à la date tᵢ ; PD(tᵢ₋₁, tᵢ) : probabilité de défaut entre tᵢ₋₁ et tᵢ ; DF(tᵢ) : facteur d'actualisation.",
+      sum: 'Formule discrète : recouvrement, exposition attendue, probabilités de défaut, actualisation.' },
+    { id: 'n3', parent: 'n2', ico: '🎲', kw: 'Monte Carlo', q: "Comment obtenir l'exposition attendue ?",
+      a: "On simule les facteurs de marché sur une grille de dates, on revalorise le portefeuille dans chaque scénario, puis on fait la moyenne de la partie positive des valeurs.",
+      sum: 'EE par Monte Carlo : diffusion, revalorisation, moyenne des expositions positives.' },
+    { id: 'n4', parent: 'n2', ico: '🛡️', kw: 'Collatéral', q: 'Et avec un collatéral ?',
+      a: "Le collatéral réduit l'exposition. Il reste un risque pendant le délai de marge (MPoR, Margin Period of Risk), durant lequel l'exposition évolue sans appel de marge.",
+      sum: "Le collatéral réduit l'EE ; le MPoR laisse un risque résiduel." },
+    { id: 'n5', parent: 'n1', ico: '🪞', kw: 'DVA', q: 'Quelle différence avec la DVA ?',
+      a: "La DVA est le symétrique de la CVA : elle valorise le risque de son propre défaut.",
+      sum: 'DVA : symétrique de la CVA, liée à son propre défaut.' },
+    { id: 'n6', parent: RACINE, ico: '🎓', kw: 'Cours', q: "Peux-tu m'aider à préparer un cours ?",
+      a: "Oui : donne-moi le public, la durée et les prérequis, et je te propose un plan.",
+      sum: 'Préparation de cours : public, durée, prérequis demandés.' },
+    { id: 'n7', parent: 'n6', ico: '🗂️', kw: 'Plan XVA', q: 'Master 2, trois heures, sur les XVA.',
+      a: "1) Pourquoi les XVA depuis 2008. 2) CVA et DVA, avec un exemple chiffré. 3) FVA, KVA, MVA et leurs débats.",
+      sum: 'Plan XVA en trois parties pour un master 2.' },
+  ];
+
+  // Icônes provisoires pour les nouvelles questions : racine de mot (sans accent) → emoji.
+  // Dans la version avec LLM, l'emoji sera choisi par le LLM en même temps que le mot-clé.
+  const ICONES = [
+    ['arbre', '🌳'], ['foret', '🌲'], ['cours', '🎓'], ['ecole', '🎓'], ['etudiant', '🎓'], ['banque', '🏦'],
+    ['argent', '💶'], ['prix', '💶'], ['cout', '💶'], ['risque', '⚠️'], ['calcul', '🧮'], ['formule', '🧮'],
+    ['date', '📅'], ['temps', '⏱️'], ['code', '💻'], ['programm', '💻'], ['donnee', '📊'], ['graph', '📈'],
+    ['marche', '📈'], ['securite', '🔒'], ['chiffr', '🔒'], ['train', '🚂'], ['locomotive', '🚂'],
+    ['voiture', '🚗'], ['livre', '📚'], ['musique', '🎵'], ['recette', '🍳'], ['cuisine', '🍳'],
+    ['voyage', '✈️'], ['maison', '🏠'], ['climat', '🌍'], ['carbone', '🌍'], ['energie', '⚡'],
+    ['robot', '🤖'], ['llm', '🤖'], ['ia', '🤖'], ['couvr', '☂️'], ['assurance', '☂️'], ['contrat', '📝'],
+    ['mail', '✉️'],
+  ];
+
+  // ---------- Outils ----------
+  const $ = id => document.getElementById(id);
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  const copie = x => JSON.parse(JSON.stringify(x));
+  const abreger = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
+  const sansAccents = s => s.normalize('NFD').replace(/\p{M}/gu, '');
+  const nouvelId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const etiquette = n => (n.ico ? n.ico + ' ' : '') + n.kw;
+  const formatCompact = new Intl.NumberFormat('fr-FR', { notation: 'compact', maximumFractionDigits: 1 });
+  function svgEl(nom, attrs) {
+    const e = document.createElementNS(SVGNS, nom);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+  function htmlEl(nom, classe, texte) {
+    const e = document.createElement(nom);
+    if (classe) e.className = classe;
+    if (texte != null) e.textContent = texte;
+    return e;
+  }
+  let minuteurToast;
+  function toast(msg) {
+    const t = $('toast');
+    t.textContent = msg; t.classList.add('on');
+    clearTimeout(minuteurToast);
+    minuteurToast = setTimeout(() => t.classList.remove('on'), DUREE_TOAST);
+  }
+
+  // ---------- Stockage local (reste sur l'appareil) ----------
+  function charger() {
+    try {
+      const e = JSON.parse(localStorage.getItem(CLE_STOCKAGE));
+      if (e && Array.isArray(e.noeuds) && e.noeuds.some(n => n.id === RACINE)) return e;
+    } catch { /* stockage indisponible : on repart de l'exemple */ }
+    return null;
+  }
+  function sauver() {
+    try { localStorage.setItem(CLE_STOCKAGE, JSON.stringify({ noeuds, selection, groupes, fenetre })); } catch { /* ignoré */ }
+  }
+
+  // ---------- État ----------
+  const etat = charger() || {};
+  let noeuds = etat.noeuds || copie(EXEMPLE);
+  let selection = etat.selection || SELECTION_INITIALE;
+  let groupes = etat.groupes || [];            // [{ id, membres: [ids des nœuds fusionnés] }]
+  let fenetre = FENETRES.includes(etat.fenetre) ? etat.fenetre : FENETRES[0];
+  let modeSelection = false;
+  const choixFusion = new Set();               // cases touchées en mode sélection
+  const vue = { x: 0, y: 0, k: 1 };            // translation (x, y) et échelle k de la carte
+  let S, P;                                    // arbre visible et positions, recalculés à chaque dessin
+
+  // ---------- Lecture de l'arbre ----------
+  const noeud = id => noeuds.find(n => n.id === id);
+  const enfants = id => noeuds.filter(n => n.parent === id);
+  function chemin(id) {                        // nœuds de la racine jusqu'à id
+    const c = [];
+    for (let n = noeud(id); n; n = noeud(n.parent)) c.unshift(n);
+    return c;
+  }
+  if (!noeud(selection)) selection = RACINE;
+
+  // Arbre visible : chaque nœud appartient à une case (lui-même, ou le groupe qui le contient)
+  function structure() {
+    const groupeDe = {};
+    for (const g of groupes) for (const m of g.membres) groupeDe[m] = g;
+    const unite = id => (groupeDe[id] ? groupeDe[id].id : id);
+    const unites = new Map();                  // id de case → { id, rep, groupe, parent }
+    for (const n of noeuds) {
+      const g = groupeDe[n.id];
+      const sommet = !g || !g.membres.includes(n.parent);   // nœud le plus haut de son groupe
+      if (sommet) unites.set(unite(n.id), { id: unite(n.id), rep: n, groupe: g || null, parent: n.parent == null ? null : unite(n.parent) });
+    }
+    const enfantsU = {};
+    for (const u of unites.values()) if (u.parent != null) (enfantsU[u.parent] ||= []).push(u.id);
+    return { unite, unites, enfantsU };
+  }
+
+  // ---------- Disposition ----------
+  function disposer(s) {
+    const pos = {};
+    let feuille = 0;
+    (function placer(u, profondeur) {
+      const k = s.enfantsU[u] || [];
+      k.forEach(e => placer(e, profondeur + 1));
+      const x = k.length ? (pos[k[0]].x + pos[k[k.length - 1]].x) / 2 : (feuille++) * ECART_X;
+      pos[u] = { x, y: profondeur * ECART_Y };
+    })(s.unite(RACINE), 0);
+    return pos;
+  }
+
+  // ---------- Dessin de la carte ----------
+  function dessiner() {
+    S = structure();
+    P = disposer(S);
+    const surChemin = new Set(chemin(selection).map(n => S.unite(n.id)));
+    const uChoisie = S.unite(selection);
+    const aFusionner = modeSelection ? completer() : new Set();
+    const calque = $('calque');
+    calque.textContent = '';
+
+    const liens = [...S.unites.values()].filter(u => u.parent != null)
+      .sort((a, b) => surChemin.has(a.id) - surChemin.has(b.id));
+    for (const u of liens) {
+      const a = P[u.parent], b = P[u.id];
+      const y0 = a.y + HAUTEUR_NOEUD / 2, y1 = b.y - HAUTEUR_NOEUD / 2 - RECUL_FLECHE, my = (y0 + y1) / 2;
+      const actif = surChemin.has(u.id);
+      calque.append(svgEl('path', {
+        d: `M${a.x},${y0} C${a.x},${my} ${b.x},${my} ${b.x},${y1}`,
+        class: actif ? 'lien actif' : 'lien',
+        'marker-end': actif ? 'url(#fleche-actif)' : 'url(#fleche)',
+      }));
+    }
+
+    const L = LARGEUR_NOEUD, H = HAUTEUR_NOEUD;
+    for (const u of S.unites.values()) {
+      const membres = u.groupe ? u.groupe.membres : [u.id];
+      const classes = ['noeud'];
+      if (membres.includes(RACINE)) classes.push('racine');
+      if (u.groupe) classes.push('groupe');
+      if (u.id === uChoisie) classes.push('choisi');
+      else if (surChemin.has(u.id)) classes.push('chemin');
+      if (membres.some(m => aFusionner.has(m))) classes.push('coche', ...(membres.some(m => choixFusion.has(m)) ? [] : ['auto']));
+      const g = svgEl('g', { class: classes.join(' '), transform: `translate(${P[u.id].x},${P[u.id].y})`, 'data-id': u.id });
+      if (u.groupe) g.append(svgEl('rect', { class: 'pile', x: -L / 2 + DECALAGE_PILE, y: -H / 2 + DECALAGE_PILE, width: L, height: H, rx: H / 2 }));
+      g.append(svgEl('rect', { class: 'fond', x: -L / 2, y: -H / 2, width: L, height: H, rx: H / 2 }));
+      const t = svgEl('text', { 'text-anchor': 'middle', dy: '0.35em' });
+      t.textContent = (u.rep.ico ? u.rep.ico + ' ' : '') + abreger(u.rep.kw, LONGUEUR_MOT_CLE);
+      const titre = svgEl('title', {});
+      titre.textContent = u.groupe ? membres.map(m => noeud(m).kw).join(' → ') : u.rep.kw;
+      g.append(t, titre);
+      if (u.groupe) {                          // pastille « +N » : nombre de cases cachées
+        g.append(svgEl('circle', { class: 'badge', cx: L / 2 - 4, cy: -H / 2 + 2, r: 13 }));
+        const nb = svgEl('text', { class: 'nb', x: L / 2 - 4, y: -H / 2 + 2, 'text-anchor': 'middle', dy: '0.35em' });
+        nb.textContent = '+' + (membres.length - 1);
+        g.append(nb);
+      }
+      calque.append(g);
+    }
+    appliquerVue();
+    remplirPanneau();
+  }
+  function appliquerVue() {
+    $('calque').setAttribute('transform', `translate(${vue.x},${vue.y}) scale(${vue.k})`);
+  }
+
+  // Zone de la carte non couverte par la barre et le panneau
+  function zoneVisible() {
+    const haut = $('barre').getBoundingClientRect().bottom;
+    const p = $('panneau').getBoundingClientRect();
+    const lateral = p.top <= haut + 1;          // grand écran : panneau à droite
+    return lateral ? { haut, w: p.left, h: innerHeight - haut } : { haut, w: innerWidth, h: p.top - haut };
+  }
+  function cadrer() {                           // tout l'arbre visible
+    const pos = Object.values(P);
+    const xs = pos.map(p => p.x), ys = pos.map(p => p.y);
+    const x0 = Math.min(...xs) - LARGEUR_NOEUD, x1 = Math.max(...xs) + LARGEUR_NOEUD;
+    const y0 = Math.min(...ys) - HAUTEUR_NOEUD, y1 = Math.max(...ys) + HAUTEUR_NOEUD;
+    const z = zoneVisible();
+    vue.k = Math.min(z.w / (x1 - x0), z.h / (y1 - y0), ZOOM_MAX_CADRAGE);
+    vue.x = (z.w - (x0 + x1) * vue.k) / 2;
+    vue.y = z.haut + (z.h - (y0 + y1) * vue.k) / 2;
+    appliquerVue();
+  }
+  function centrerSur(id) {
+    const p = P[S.unite(id)], z = zoneVisible();
+    vue.x = z.w / 2 - p.x * vue.k;
+    vue.y = z.haut + z.h / 2 - p.y * vue.k;
+    appliquerVue();
+  }
+  function estVisible(id) {                     // la case est-elle dans la zone non couverte de l'écran ?
+    const p = P[S.unite(id)], z = zoneVisible();
+    const sx = p.x * vue.k + vue.x, sy = p.y * vue.k + vue.y;
+    return sx > 0 && sx < z.w && sy > z.haut && sy < z.haut + z.h;
+  }
+  function zoomerAutour(cx, cy, facteur) {      // zoom en gardant le point (cx, cy) fixe à l'écran
+    const k = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, vue.k * facteur));
+    const f = k / vue.k;
+    vue.x = cx - (cx - vue.x) * f;
+    vue.y = cy - (cy - vue.y) * f;
+    vue.k = k;
+  }
+
+  // ---------- Gestes sur la carte ----------
+  const svg = $('carte');
+  const pointeurs = new Map();                  // doigts (ou souris) actuellement posés
+  let depart = null, pincement = null;
+  const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  const milieu = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+
+  svg.addEventListener('pointerdown', e => {
+    const cible = e.target.closest('[data-id]');
+    svg.setPointerCapture(e.pointerId);
+    pointeurs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointeurs.size === 1) depart = { x: e.clientX, y: e.clientY, cible, bouge: false };
+    if (pointeurs.size === 2) {
+      const [a, b] = [...pointeurs.values()];
+      pincement = { d: distance(a, b), m: milieu(a, b) };
+      if (depart) depart.bouge = true;
+    }
+  });
+  svg.addEventListener('pointermove', e => {
+    const avant = pointeurs.get(e.pointerId);
+    if (!avant) return;
+    const apres = { x: e.clientX, y: e.clientY };
+    pointeurs.set(e.pointerId, apres);
+    if (pointeurs.size === 1) {
+      vue.x += apres.x - avant.x;
+      vue.y += apres.y - avant.y;
+      if (depart && distance(apres, depart) > SEUIL_TOUCHER) depart.bouge = true;
+    } else if (pointeurs.size === 2 && pincement) {
+      const [a, b] = [...pointeurs.values()];
+      const d = distance(a, b), m = milieu(a, b);
+      zoomerAutour(m.x, m.y, d / pincement.d);
+      vue.x += m.x - pincement.m.x;
+      vue.y += m.y - pincement.m.y;
+      pincement = { d, m };
+    }
+    appliquerVue();
+  });
+  function relacher(e) {
+    if (!pointeurs.delete(e.pointerId)) return;
+    if (pointeurs.size < 2) pincement = null;
+    if (pointeurs.size === 0) {
+      if (depart && !depart.bouge && depart.cible) toucher(depart.cible.getAttribute('data-id'));
+      depart = null;
+    }
+  }
+  svg.addEventListener('pointerup', relacher);
+  svg.addEventListener('pointercancel', relacher);
+  svg.addEventListener('wheel', e => {
+    e.preventDefault();
+    zoomerAutour(e.clientX, e.clientY, Math.exp(-e.deltaY * SENSIBILITE_MOLETTE));
+    appliquerVue();
+  }, { passive: false });
+  document.addEventListener('gesturestart', e => e.preventDefault());   // Safari : bloque le zoom de page
+
+  // Toucher une case : choisir, éclater un groupe, ou cocher en mode sélection
+  function toucher(idCase) {
+    const u = S.unites.get(idCase);
+    if (!u) return;
+    if (modeSelection) {
+      const ids = u.groupe ? u.groupe.membres : [u.id];
+      const dejaCoches = ids.every(i => choixFusion.has(i));
+      ids.forEach(i => (dejaCoches ? choixFusion.delete(i) : choixFusion.add(i)));
+      majBoutonFusion();
+      dessiner();
+      return;
+    }
+    if (u.groupe) { eclater(u.groupe.id); return; }
+    choisir(u.id, false);
+  }
+
+  // ---------- Sélection d'un nœud ----------
+  function choisir(id, recentrer) {
+    selection = id;
+    sauver();
+    dessiner();
+    if (recentrer || !estVisible(id)) centrerSur(id);
+  }
+
+  // ---------- Fusion et éclatement ----------
+  // Complète les cases cochées par celles qui les relient : on part de leur ancêtre commun
+  // le plus proche et on ajoute tous les nœuds des chemins qui en descendent jusqu'à elles.
+  function completer() {
+    const chemins = [...choixFusion].filter(noeud).map(id => chemin(id).map(n => n.id));
+    if (!chemins.length) return new Set();
+    let k = 0;                                  // longueur du début commun à tous les chemins
+    while (chemins.every(c => k < c.length && c[k] === chemins[0][k])) k++;
+    const groupe = new Set();
+    for (const c of chemins) c.slice(k - 1).forEach(id => groupe.add(id));
+    return groupe;
+  }
+  function majBoutonFusion() {
+    $('b-fusionner').textContent = `Fusionner (${completer().size})`;
+  }
+  function passerEnSelection(actif) {
+    modeSelection = actif;
+    choixFusion.clear();
+    document.body.classList.toggle('mode-selection', actif);
+    $('sous-titre').textContent = actif ? 'Touche les cases à fusionner' : 'POC · sans LLM';
+    fermerMenu();
+    majBoutonFusion();
+    dessiner();
+  }
+  function fusionner() {
+    const membres = completer();
+    if (membres.size < 2) { toast('Choisis au moins deux cases.'); return; }
+    const autres = [];
+    for (const g of groupes) {                  // un groupe existant qui touche la sélection est absorbé
+      if (g.membres.some(m => membres.has(m))) g.membres.forEach(m => membres.add(m));
+      else autres.push(g);
+    }
+    groupes = [...autres, { id: 'g' + nouvelId(), membres: [...membres] }];
+    sauver();
+    passerEnSelection(false);
+    toast(`${membres.size} cases fusionnées. Touche la case pour l'éclater.`);
+  }
+  function eclater(idGroupe) {
+    groupes = groupes.filter(g => g.id !== idGroupe);
+    sauver();
+    dessiner();
+    toast('Case éclatée');
+  }
+
+  // ---------- Panneau : fil, contexte, jauges ----------
+  function remplirPanneau() {
+    const n = noeud(selection);
+    $('p-kw').textContent = etiquette(n);
+    $('p-sum').textContent = n.id === RACINE ? 'Pose une première question pour démarrer une nouvelle branche.' : n.sum;
+    $('question').placeholder = `Après « ${abreger(n.kw, LONGUEUR_MOT_CLE)} »…`;
+
+    const c = chemin(selection).filter(m => m.id !== RACINE);
+    const fil = $('fil');
+    fil.textContent = '';
+    if (!c.length) fil.append(htmlEl('p', 'vide', 'Aucun échange sur ce chemin pour le moment.'));
+    c.forEach((m, i) => {
+      if (i > 0) fil.append(htmlEl('div', 'fleche-fil', '↓'));
+      const bloc = htmlEl('article', 'echange' + (m.id === selection ? ' courant' : ''));
+      bloc.dataset.id = m.id;
+      bloc.append(htmlEl('p', 'kw', etiquette(m)), htmlEl('p', 'q', m.q), htmlEl('p', 'a', m.a));
+      fil.append(bloc);
+    });
+    const suites = enfants(selection);
+    if (suites.length) {
+      const d = htmlEl('div', 'suites');
+      d.append(htmlEl('p', null, 'Suites déjà explorées depuis ce nœud :'));
+      for (const s of suites) {
+        const b = htmlEl('button', null, etiquette(s));
+        b.type = 'button';
+        b.dataset.id = s.id;
+        d.append(b);
+      }
+      fil.append(d);
+    }
+    requestAnimationFrame(() => fil.querySelector('.courant')?.scrollIntoView({ block: 'nearest' }));
+    remplirContexte(c);
+    remplirJauges(c);
+  }
+
+  const tokens = nbCar => Math.ceil(nbCar / CARACTERES_PAR_TOKEN);
+  const somme = (liste, f) => liste.reduce((s, n) => s + f(n), 0);
+  const tailleEchange = n => n.q.length + n.a.length;
+
+  // Contexte compact : résumé des étapes anciennes + NB_ECHANGES_COMPLETS derniers échanges en entier
+  function remplirContexte(c) {
+    const ctx = $('ctx');
+    ctx.textContent = '';
+    if (!c.length) {
+      ctx.append(htmlEl('p', 'vide', 'Rien à envoyer : une question posée ici partira sans contexte.'));
+      return;
+    }
+    const coupe = Math.max(0, c.length - NB_ECHANGES_COMPLETS);
+    const resumes = c.slice(0, coupe), complets = c.slice(coupe);
+    const compact = somme(resumes, n => n.kw.length + n.sum.length) + somme(complets, tailleEchange);
+    const complet = somme(c, tailleEchange);
+
+    const stat = htmlEl('div', 'stat');
+    const chiffre = htmlEl('p', 'chiffre');
+    chiffre.append(htmlEl('mark', null, `≈ ${tokens(compact)} tokens`));
+    stat.append(chiffre, htmlEl('p', null,
+      `envoyés au LLM pour une question posée ici, contre ≈ ${tokens(complet)} tokens pour tout le chemin en entier (${c.length} échange${c.length > 1 ? 's' : ''}).`));
+    ctx.append(stat);
+
+    if (resumes.length) {
+      ctx.append(htmlEl('h3', null, 'Étapes anciennes : résumé seulement'));
+      const ul = htmlEl('ul');
+      for (const n of resumes) ul.append(htmlEl('li', null, `${etiquette(n)} : ${n.sum}`));
+      ctx.append(ul);
+    }
+    const pl = complets.length > 1 ? 's' : '';
+    ctx.append(htmlEl('h3', null, `Dernier${pl} échange${pl} : en entier`));
+    complets.forEach((n, i) => {
+      if (i > 0) ctx.append(htmlEl('div', 'fleche-fil', '↓'));
+      const b = htmlEl('div', 'echange');
+      b.append(htmlEl('p', 'q', n.q), htmlEl('p', 'a', n.a));
+      ctx.append(b);
+    });
+    ctx.append(htmlEl('p', 'note',
+      `Règle : les ${NB_ECHANGES_COMPLETS} derniers échanges en entier, le résumé des précédents, rien des branches voisines. Estimation : 1 token ≈ ${CARACTERES_PAR_TOKEN} caractères.`));
+  }
+
+  // Deux jauges : tokens du chemin en cours et de tout l'arbre, rapportés à la fenêtre du modèle
+  function remplirJauges(c) {
+    const ratioChemin = majJauge('j-chemin', tokens(somme(c, tailleEchange)));
+    majJauge('j-arbre', tokens(somme(noeuds, tailleEchange)));
+    $('b-repartir').hidden = !(ratioChemin >= SEUIL_ALERTE && c.length > 0);
+  }
+  function majJauge(id, nbTokens) {
+    const ratio = nbTokens / fenetre;
+    const j = $(id);
+    j.querySelector('i').style.width = Math.min(100, ratio * 100) + '%';
+    j.querySelector('.val').textContent = `${formatCompact.format(nbTokens)} / ${formatCompact.format(fenetre)}`;
+    j.classList.toggle('alerte', ratio >= SEUIL_ALERTE);
+    return ratio;
+  }
+  $('jauges').addEventListener('click', () => {
+    fenetre = FENETRES[(FENETRES.indexOf(fenetre) + 1) % FENETRES.length];
+    sauver();
+    remplirPanneau();
+    toast(`Contexte maximal du modèle : ${formatCompact.format(fenetre)} tokens`);
+  });
+
+  // Repartir du résumé : nouvelle conversation dont le point de départ est le résumé du chemin
+  $('b-repartir').addEventListener('click', () => {
+    const origine = noeud(selection);
+    const c = chemin(selection).filter(m => m.id !== RACINE);
+    const n = { id: 'n' + nouvelId(), parent: RACINE, ico: '♻️', kw: 'Reprise',
+      q: `Reprise de « ${origine.kw} » dans une nouvelle conversation`,
+      a: c.map(m => `${etiquette(m)} : ${m.sum}`).join('\n'),
+      sum: `Nouvelle conversation qui part du résumé de « ${origine.kw} ».` };
+    noeuds.push(n);
+    choisir(n.id, true);
+    toast('Nouvelle conversation créée à partir du résumé');
+  });
+
+  $('fil').addEventListener('click', e => {
+    const c = e.target.closest('[data-id]');
+    if (c) choisir(c.dataset.id, true);
+  });
+  $('poignee').addEventListener('click', () => {
+    const ouvert = $('panneau').classList.toggle('replie') === false;
+    $('poignee').setAttribute('aria-expanded', String(ouvert));
+    centrerSur(selection);
+  });
+  document.querySelectorAll('[data-onglet]').forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll('[data-onglet]').forEach(o => {
+      const actif = o === b;
+      o.setAttribute('aria-selected', String(actif));
+      $(o.dataset.onglet).hidden = !actif;
+    });
+  }));
+
+  // ---------- Nouvelle question (réponse simulée) ----------
+  const MOTS_VIDES = new Set(['comment', 'pourquoi', 'quelle', 'quelles', 'quels', 'quel', 'dans', 'avec',
+    'pour', 'sans', 'faire', 'peux', 'peut', 'cette', 'entre', 'sont', 'what', 'with', 'that', 'this', 'does', 'from']);
+  function motCle(q) {                // provisoire : le mot significatif le plus long (le LLM le fera ensuite)
+    const mots = q.match(/[\p{L}\p{N}'-]+/gu) || [];
+    const m = mots.filter(w => w.length >= 4 && !MOTS_VIDES.has(w.toLowerCase()))
+      .sort((a, b) => b.length - a.length)[0] || mots[0] || 'Question';
+    return m[0].toUpperCase() + m.slice(1);
+  }
+  function icone(q) {                 // provisoire : premier mot reconnu dans ICONES, sinon pas d'icône
+    const mots = sansAccents(q.toLowerCase()).match(/[a-z0-9]+/g) || [];
+    for (const [racine, ico] of ICONES) {
+      if (mots.some(m => (racine.length <= 3 ? m === racine : m.startsWith(racine)))) return ico;
+    }
+    return '';
+  }
+  const reponseSimulee = q => `Réponse simulée à « ${q} ».\nÀ l'étape suivante, ce texte viendra du LLM choisi (Claude, GPT, Mistral, modèle local…), ainsi que le mot-clé, l'icône et le résumé.`;
+
+  const champ = $('question');
+  champ.addEventListener('input', () => {
+    champ.style.height = 'auto';
+    champ.style.height = champ.scrollHeight + 'px';
+  });
+  champ.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey && !matchMedia('(pointer: coarse)').matches) {
+      e.preventDefault();
+      $('saisie').requestSubmit();
+    }
+  });
+  $('saisie').addEventListener('submit', e => {
+    e.preventDefault();
+    const q = champ.value.trim();
+    if (!q) return;
+    const n = { id: 'n' + nouvelId(), parent: selection, q, a: '…',
+      ico: icone(q), kw: motCle(q), sum: 'Question : ' + abreger(q, LONGUEUR_RESUME) };
+    noeuds.push(n);
+    champ.value = '';
+    champ.style.height = '';
+    choisir(n.id, true);
+    setTimeout(() => {
+      n.a = reponseSimulee(q);
+      sauver();
+      if (selection === n.id) remplirPanneau();
+    }, DELAI_REPONSE_SIMULEE);
+  });
+
+  // ---------- Barre du haut ----------
+  function fermerMenu() {
+    $('menu').hidden = true;
+    $('b-menu').setAttribute('aria-expanded', 'false');
+  }
+  $('b-menu').addEventListener('click', () => {
+    const ouvrir = $('menu').hidden;
+    $('menu').hidden = !ouvrir;
+    $('b-menu').setAttribute('aria-expanded', String(ouvrir));
+  });
+  document.addEventListener('pointerdown', e => {
+    if (!$('menu').hidden && !e.target.closest('#menu, #b-menu')) fermerMenu();
+  });
+  $('b-selection').addEventListener('click', () => passerEnSelection(true));
+  $('b-annuler').addEventListener('click', () => passerEnSelection(false));
+  $('b-fusionner').addEventListener('click', fusionner);
+  $('b-cadrer').addEventListener('click', cadrer);
+  $('b-export').addEventListener('click', () => {
+    fermerMenu();
+    const json = JSON.stringify({ version: 2, noeuds, groupes }, null, 2);
+    navigator.clipboard?.writeText(json)
+      .then(() => toast('Arbre copié au format JSON'))
+      .catch(() => toast('Copie refusée par le navigateur'));
+  });
+  let attenteReinit = null;
+  $('b-reinit').addEventListener('click', e => {
+    const b = e.currentTarget;
+    if (!attenteReinit) {               // premier appui : demande de confirmation
+      b.textContent = 'Confirmer ?';
+      attenteReinit = setTimeout(() => { b.textContent = 'Réinitialiser'; attenteReinit = null; }, DELAI_CONFIRMATION);
+      return;
+    }
+    clearTimeout(attenteReinit);
+    attenteReinit = null;
+    b.textContent = 'Réinitialiser';
+    fermerMenu();
+    noeuds = copie(EXEMPLE);
+    selection = SELECTION_INITIALE;
+    groupes = [];
+    sauver();
+    dessiner();
+    cadrer();
+    toast("Arbre d'exemple rétabli");
+  });
+
+  // ---------- Démarrage ----------
+  dessiner();
+  requestAnimationFrame(cadrer);
+  addEventListener('resize', () => centrerSur(selection));   // ex. ouverture du clavier
+
+  // Mode hors connexion (PWA) : ignoré là où les service workers sont interdits
+  try {
+    if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+  } catch { /* ignoré */ }
+}
