@@ -2,7 +2,8 @@
    IDEA    : a metro map — each question is a station, each branch a line
    PICTURE : the tree itself, full screen
    COLOUR and TYPE : white, ink #101418, yellow #ffd84a for the active node; system font
-   LAYOUT  : full-screen map, thin top bar, sliding bottom panel (on the right on large screens) */
+   LAYOUT  : full-screen map, thin top bar, sliding bottom panel (on the right on large screens)
+   Text-level spacing uses logical properties (inline-start/end) so right-to-left languages mirror correctly. */
 
 :root {
   color-scheme: light dark;
@@ -13,6 +14,8 @@
   --card: light-dark(#f3f5f7, #182028);
   --acc: #ffd84a;
   --acc-ink: #101418;
+  --alert: #e8590c;
+  --error: #c2410c;
 }
 :root[data-theme=light] { color-scheme: light }
 :root[data-theme=dark] { color-scheme: dark }
@@ -32,7 +35,7 @@ button {
 button:focus-visible, textarea:focus-visible { outline: 3px solid var(--acc); outline-offset: 2px }
 
 /* ---- Top bar ---- */
-#barre {
+#topbar {
   position: fixed; inset: 0 0 auto; z-index: 2;
   display: flex; align-items: center; gap: 6px;
   padding: calc(env(safe-area-inset-top) + 6px) max(12px, env(safe-area-inset-right)) 6px max(12px, env(safe-area-inset-left));
@@ -40,160 +43,166 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid var(--acc); ou
   backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--line);
 }
-#barre h1 { margin: 0 auto 0 0; font-size: 20px; line-height: 1.1; font-weight: 800 }
-#barre h1 small { display: block; font-size: 13px; font-weight: 500; color: var(--slate); white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
-#barre button { font-size: 14px; padding: 0 10px; white-space: nowrap; flex: none }
-#b-menu { min-width: 44px; font-size: 18px; font-weight: 800 }
-#b-fusionner, #b-repartir { background: var(--acc); color: var(--acc-ink); border-color: var(--acc-ink); font-weight: 700 }
-.en-selection { display: none }
-body.mode-selection #barre .hors-selection { display: none }
-body.mode-selection #barre .en-selection { display: inline-block }
+#topbar h1 { margin: 0; margin-inline-end: auto; font-size: 20px; line-height: 1.1; font-weight: 800 }
+#topbar h1 small { display: block; font-size: 13px; font-weight: 500; color: var(--slate); white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+#topbar button { font-size: 14px; padding: 0 10px; white-space: nowrap; flex: none }
+#btn-menu { min-width: 44px; font-size: 18px; font-weight: 800 }
+#btn-merge, #btn-restart { background: var(--acc); color: var(--acc-ink); border-color: var(--acc-ink); font-weight: 700 }
+.in-select { display: none }
+body.select-mode #topbar .outside-select { display: none }
+body.select-mode #topbar .in-select { display: inline-block }
 #menu {
-  position: absolute; top: 100%; right: 12px; margin-top: 6px; padding: 8px;
+  position: absolute; top: 100%; inset-inline-end: 12px; margin-top: 6px; padding: 8px;
   display: grid; gap: 6px; background: var(--bg);
   border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 8px 24px rgb(0 0 0 / .12);
 }
 #menu[hidden] { display: none }
 
 /* ---- Map ---- */
-#carte {
+#map {
   position: fixed; inset: 0; width: 100%; height: 100%;
   touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab;
 }
-.lien { fill: none; stroke: var(--line); stroke-width: 4; stroke-linecap: round }
-.lien.actif { stroke: var(--ink); stroke-width: 6 }
-.pointe { fill: var(--line) }
-.pointe-actif { fill: var(--ink) }
-.noeud { cursor: pointer }
-.noeud .fond { fill: var(--bg); stroke: var(--line); stroke-width: 2 }
-.noeud .pile { fill: var(--card); stroke: var(--line); stroke-width: 2 }
-.noeud text { font-size: 15px; font-weight: 600; fill: var(--ink); pointer-events: none }
-.noeud.chemin .fond, .noeud.chemin .pile { stroke: var(--ink); stroke-width: 3 }
-.noeud.choisi .fond { fill: var(--acc); stroke: var(--acc-ink); stroke-width: 3 }
-.noeud.choisi text { fill: var(--acc-ink); font-weight: 800 }
-.noeud.racine .fond { fill: var(--ink); stroke: var(--ink) }
-.noeud.racine text { fill: var(--bg) }
-.noeud.racine.choisi .fond { fill: var(--acc); stroke: var(--acc-ink) }
-.noeud.racine.choisi text { fill: var(--acc-ink) }
-.noeud .badge { fill: var(--ink); stroke: var(--bg); stroke-width: 2 }
-.noeud text.nb { font-size: 12px; font-weight: 800; fill: var(--bg) }
+.link { fill: none; stroke: var(--line); stroke-width: 4; stroke-linecap: round }
+.link.active { stroke: var(--ink); stroke-width: 6 }
+.arrowhead { fill: var(--line) }
+.arrowhead-active { fill: var(--ink) }
+.node { cursor: pointer }
+.node .box { fill: var(--bg); stroke: var(--line); stroke-width: 2 }
+.node .stack { fill: var(--card); stroke: var(--line); stroke-width: 2 }
+.node text { font-size: 15px; font-weight: 600; fill: var(--ink); pointer-events: none }
+.node.on-path .box, .node.on-path .stack { stroke: var(--ink); stroke-width: 3 }
+.node.selected .box { fill: var(--acc); stroke: var(--acc-ink); stroke-width: 3 }
+.node.selected text { fill: var(--acc-ink); font-weight: 800 }
+.node.root .box { fill: var(--ink); stroke: var(--ink) }
+.node.root text { fill: var(--bg) }
+.node.root.selected .box { fill: var(--acc); stroke: var(--acc-ink) }
+.node.root.selected text { fill: var(--acc-ink) }
+.node .badge { fill: var(--ink); stroke: var(--bg); stroke-width: 2 }
+.node text.count { font-size: 12px; font-weight: 800; fill: var(--bg) }
 /* Selection mode: ticked boxes (dashed) and automatically added boxes (paler) */
-.noeud.coche .fond { fill: color-mix(in srgb, var(--acc) 50%, var(--bg)); stroke: var(--ink); stroke-width: 3; stroke-dasharray: 7 4 }
-.noeud.coche.auto .fond { fill: color-mix(in srgb, var(--acc) 20%, var(--bg)); stroke-width: 2 }
-.noeud.coche text:not(.nb) { fill: var(--ink) }
+.node.ticked .box { fill: color-mix(in srgb, var(--acc) 50%, var(--bg)); stroke: var(--ink); stroke-width: 3; stroke-dasharray: 7 4 }
+.node.ticked.auto .box { fill: color-mix(in srgb, var(--acc) 20%, var(--bg)); stroke-width: 2 }
+.node.ticked text:not(.count) { fill: var(--ink) }
 
 /* ---- Bottom panel ---- */
-#panneau {
+#panel {
   position: fixed; inset: auto 0 0; z-index: 3;
   display: flex; flex-direction: column; max-height: 68vh;
   background: var(--bg); border-top: 1px solid var(--line);
   border-radius: 18px 18px 0 0; box-shadow: 0 -8px 24px rgb(0 0 0 / .08);
   padding: 0 max(12px, env(safe-area-inset-right)) calc(env(safe-area-inset-bottom) + 10px) max(12px, env(safe-area-inset-left));
 }
-#poignee, #saisie { flex: none }
-#poignee {
+#handle, #ask-form { flex: none }
+#handle {
   position: relative; display: block; width: 100%; min-height: 0;
-  padding: 18px 4px 10px; border: 0; border-radius: 0; background: none; text-align: left;
+  padding: 18px 4px 10px; border: 0; border-radius: 0; background: none; text-align: start;
 }
-#poignee::before {
+#handle::before {
   content: ""; position: absolute; top: 7px; left: 50%; width: 40px; height: 4px;
   margin-left: -20px; border-radius: 2px; background: var(--line);
 }
-#p-kw { display: block; font-size: 18px; font-weight: 800; line-height: 1.2 }
-#p-sum { display: block; font-size: 14px; color: var(--slate); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
-#panneau:not(.replie) #p-sum { white-space: normal }
-#corps { flex: 1 1 auto; min-height: 0; overflow: auto; padding-bottom: 8px }
-.replie #corps { display: none }
+#panel-title { display: block; font-size: 18px; font-weight: 800; line-height: 1.2 }
+#panel-summary { display: block; font-size: 14px; color: var(--slate); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+#panel:not(.collapsed) #panel-summary { white-space: normal }
+#panel-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding-bottom: 8px }
+.collapsed #panel-body { display: none }
 
-.onglets { display: flex; gap: 6px; margin: 2px 0 12px }
-.onglets button { font-size: 14px }
-.onglets button[aria-selected=true] { background: var(--ink); color: var(--bg); border-color: var(--ink) }
+.tabs { display: flex; gap: 6px; margin: 2px 0 12px }
+.tabs button { font-size: 14px }
+.tabs button[aria-selected=true] { background: var(--ink); color: var(--bg); border-color: var(--ink) }
 
-.echange { margin: 0 0 10px; padding: 8px 12px; border-left: 4px solid var(--line); cursor: pointer }
-.echange.courant { border-left-color: var(--acc); background: var(--card); border-radius: 0 10px 10px 0 }
-.echange .kw { margin: 0; font-size: 13px; font-weight: 700; color: var(--slate) }
-.echange .q { margin: 2px 0 4px; font-weight: 650 }
-.echange .a { margin: 0; white-space: pre-wrap }
-.fleche-fil { margin: -6px 0 4px 16px; font-size: 18px; line-height: 1; color: var(--slate) }
-.suites { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0 8px }
-.suites p { width: 100%; margin: 0; font-size: 13px; color: var(--slate) }
-.suites button { font-size: 14px }
+.exchange { margin: 0 0 10px; padding: 8px 12px; border-inline-start: 4px solid var(--line); cursor: pointer }
+.exchange.current {
+  border-inline-start-color: var(--acc); background: var(--card);
+  border-start-end-radius: 10px; border-end-end-radius: 10px;
+}
+.exchange .kw { margin: 0; font-size: 13px; font-weight: 700; color: var(--slate) }
+.exchange .q { margin: 2px 0 4px; font-weight: 650 }
+.exchange .a { margin: 0; white-space: pre-wrap }
+.exchange.error .a { color: var(--error) }
+/* User content keeps its own direction (e.g. English text inside an Arabic interface) */
+.exchange .kw, .exchange .q, .exchange .a, #panel-title, #panel-summary, #context li, .follow-ups button { unicode-bidi: plaintext }
+.thread-arrow { margin: -6px 0 4px; margin-inline-start: 16px; font-size: 18px; line-height: 1; color: var(--slate) }
+.follow-ups { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0 8px }
+.follow-ups p { width: 100%; margin: 0; font-size: 13px; color: var(--slate) }
+.follow-ups button, .retry { font-size: 14px }
+.retry { margin-top: 8px }
 
-#ctx h3 { margin: 14px 0 6px; font-size: 15px }
-#ctx ul { margin: 0; padding-left: 20px }
-#ctx .echange { cursor: default }
+#context h3 { margin: 14px 0 6px; font-size: 15px }
+#context ul { margin: 0; padding-inline-start: 20px }
+#context .exchange { cursor: default }
 .stat { padding: 12px 14px; border-radius: 12px; background: var(--card) }
 .stat p { margin: 0 }
-.chiffre { font-size: 26px; font-weight: 800; line-height: 1.2 }
-.chiffre mark { padding: 0 6px; border-radius: 4px; background: var(--acc); color: var(--acc-ink) }
-.note, .vide { font-size: 13px; color: var(--slate) }
+.figure { font-size: 26px; font-weight: 800; line-height: 1.2 }
+.figure mark { padding: 0 6px; border-radius: 4px; background: var(--acc); color: var(--acc-ink) }
+.note, .empty { font-size: 13px; color: var(--slate) }
 
-#saisie { display: flex; align-items: flex-end; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line) }
+#ask-form { display: flex; align-items: flex-end; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line) }
 #question {
   flex: 1; min-height: 44px; max-height: 120px; resize: none;
   padding: 10px 12px; font-size: 16px;
   border: 1px solid var(--line); border-radius: 14px; background: var(--card);
 }
-#saisie button { background: var(--ink); color: var(--bg); border-color: var(--ink); font-weight: 700 }
+#ask-form button { background: var(--ink); color: var(--bg); border-color: var(--ink); font-weight: 700 }
 
-/* ---- Token gauges (bottom-right corner of the map) ---- */
-#coin {
-  position: absolute; right: max(12px, env(safe-area-inset-right)); bottom: 100%; margin-bottom: 10px;
+/* ---- Token gauges (bottom corner of the map) ---- */
+#corner {
+  position: absolute; inset-inline-end: max(12px, env(safe-area-inset-right)); bottom: 100%; margin-bottom: 10px;
   display: flex; flex-direction: column; align-items: flex-end; gap: 6px; pointer-events: none;
 }
-#coin > * { pointer-events: auto }
-#coin [hidden] { display: none }
-#jauges {
-  display: grid; gap: 5px; width: 200px; min-height: 0; padding: 8px 10px;
-  border-radius: 12px; text-align: left; font-size: 12px;
+#corner > * { pointer-events: auto }
+#corner [hidden] { display: none }
+#gauges {
+  display: grid; gap: 5px; width: 210px; min-height: 0; padding: 8px 10px;
+  border-radius: 12px; text-align: start; font-size: 12px;
   background: color-mix(in srgb, var(--bg) 88%, transparent);
   backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
 }
-.jauge { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 6px; color: var(--slate) }
-.jauge .barre { height: 5px; border-radius: 3px; background: var(--line); overflow: hidden }
-.jauge .barre i { display: block; width: 0; min-width: 2px; height: 100%; border-radius: 3px; background: var(--ink) }
-.jauge .val { white-space: nowrap; font-variant-numeric: tabular-nums }
-.jauge.alerte .barre i { background: #e8590c }
-.jauge.alerte .val { color: #e8590c; font-weight: 700 }
-#b-repartir { font-size: 14px }
-@media (max-width: 899px) { #panneau:not(.replie) #coin { display: none } }   /* panel open: the map is small */
+.gauge { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; align-items: center; gap: 6px; color: var(--slate) }
+.gauge > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.gauge .bar { height: 5px; border-radius: 3px; background: var(--line); overflow: hidden }
+.gauge .bar i { display: block; width: 0; min-width: 2px; height: 100%; border-radius: 3px; background: var(--ink) }
+.gauge .value { white-space: nowrap; font-variant-numeric: tabular-nums }
+.gauge.alert .bar i { background: var(--alert) }
+.gauge.alert .value { color: var(--alert); font-weight: 700 }
+#btn-restart { font-size: 14px }
+@media (max-width: 899px) { #panel:not(.collapsed) #corner { display: none } }   /* panel open: the map is small */
 
 /* ---- LLM settings ---- */
 dialog {
-  width: min(92vw, 440px); padding: 20px; color: var(--ink); background: var(--bg);
+  width: min(92vw, 440px); max-height: 90vh; padding: 20px; color: var(--ink); background: var(--bg);
   border: 1px solid var(--line); border-radius: 18px;
 }
 dialog::backdrop { background: rgb(0 0 0 / .45) }
 dialog h2 { margin: 0 0 4px; font-size: 20px }
-#f-reglages label { display: grid; gap: 4px; margin-top: 12px; font-size: 14px; font-weight: 600 }
-#f-reglages input:not([type=checkbox]), #f-reglages select {
+#settings-form label { display: grid; gap: 4px; margin-top: 12px; font-size: 14px; font-weight: 600 }
+#settings-form input:not([type=checkbox]), #settings-form select {
   min-height: 44px; padding: 8px 12px; font: inherit; font-size: 16px; font-weight: 400; color: inherit;
   background: var(--card); border: 1px solid var(--line); border-radius: 12px;
 }
-#f-reglages label.case { display: flex; align-items: center; gap: 10px; font-weight: 500 }
-#f-reglages input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--ink) }
+#settings-form label.check { display: flex; align-items: center; gap: 10px; font-weight: 500 }
+#settings-form input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--ink) }
 .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 16px }
-button.principal { background: var(--ink); color: var(--bg); border-color: var(--ink); font-weight: 700 }
-.reessayer { margin-top: 8px; font-size: 14px }
-.echange.erreur .a { color: #c2410c }
+button.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); font-weight: 700 }
 
 #toast {
   position: fixed; left: 50%; top: calc(env(safe-area-inset-top) + 72px); z-index: 5;
-  padding: 8px 14px; border-radius: 20px; background: var(--ink); color: var(--bg); font-size: 14px;
+  max-width: 90vw; padding: 8px 14px; border-radius: 20px; background: var(--ink); color: var(--bg); font-size: 14px;
   opacity: 0; transform: translate(-50%, -8px); transition: opacity .2s, transform .2s; pointer-events: none;
 }
 #toast.on { opacity: 1; transform: translate(-50%, 0) }
 
-/* Large screen: panel fixed on the right, always open */
+/* Large screen: panel fixed on the right, always open (the map stays on the left in every language) */
 @media (min-width: 900px) {
-  #panneau {
+  #panel {
     inset: 0 0 0 auto; width: 420px; max-height: none; padding-top: 70px;
     border-top: 0; border-left: 1px solid var(--line); border-radius: 0; box-shadow: none;
   }
-  #poignee::before { display: none }
-  .replie #corps { display: block }
-  #panneau #p-sum { white-space: normal }
-  #barre { right: 420px }
-  #coin { position: fixed; right: 436px; bottom: 16px; margin: 0 }
+  #handle::before { display: none }
+  .collapsed #panel-body { display: block }
+  #panel #panel-summary { white-space: normal }
+  #topbar { right: 420px }
+  #corner { position: fixed; inset-inline-end: auto; right: 436px; bottom: 16px; margin: 0 }
 }
 @media (prefers-reduced-motion: reduce) { #toast { transition: none } }

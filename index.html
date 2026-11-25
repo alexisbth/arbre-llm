@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="en" dir="ltr">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -14,77 +14,88 @@
 </head>
 <body>
 
-<header id="barre">
-  <h1>Arbre <small id="sous-titre">POC · sans LLM</small></h1>
-  <button id="b-selection" class="hors-selection" type="button">Sélection</button>
-  <button id="b-cadrer" class="hors-selection" type="button">Cadrer</button>
-  <button id="b-menu" class="hors-selection" type="button" aria-label="Plus d'actions" aria-haspopup="true" aria-expanded="false">⋯</button>
-  <button id="b-fusionner" class="en-selection" type="button">Fusionner</button>
-  <button id="b-annuler" class="en-selection" type="button">Annuler</button>
+<header id="topbar">
+  <h1>Arbre <small id="subtitle"></small></h1>
+  <button id="btn-select" class="outside-select" type="button" data-i18n="select">Select</button>
+  <button id="btn-fit" class="outside-select" type="button" data-i18n="fit">Fit</button>
+  <button id="btn-menu" class="outside-select" type="button" data-i18n-aria="moreActions" aria-label="More actions" aria-haspopup="true" aria-expanded="false">⋯</button>
+  <button id="btn-merge" class="in-select" type="button">Merge</button>
+  <button id="btn-cancel" class="in-select" type="button" data-i18n="cancel">Cancel</button>
   <div id="menu" hidden>
-    <button id="b-reglages" type="button">Réglages du LLM</button>
-    <button id="b-export" type="button">Copier en JSON</button>
-    <button id="b-reinit" type="button">Réinitialiser</button>
+    <button id="btn-settings" type="button" data-i18n="settingsMenu">Settings</button>
+    <button id="btn-export" type="button" data-i18n="exportJson">Copy as JSON</button>
+    <button id="btn-reset" type="button" data-i18n="reset">Reset</button>
   </div>
 </header>
 
-<svg id="carte" role="img" aria-label="Carte de la conversation">
+<svg id="map" role="img" data-i18n-aria="mapLabel" aria-label="Conversation map">
   <defs>
-    <marker id="fleche" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="13" markerHeight="13" markerUnits="userSpaceOnUse" orient="auto">
-      <path class="pointe" d="M0,0 L10,5 L0,10 z"/>
+    <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="13" markerHeight="13" markerUnits="userSpaceOnUse" orient="auto">
+      <path class="arrowhead" d="M0,0 L10,5 L0,10 z"/>
     </marker>
-    <marker id="fleche-actif" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="15" markerHeight="15" markerUnits="userSpaceOnUse" orient="auto">
-      <path class="pointe-actif" d="M0,0 L10,5 L0,10 z"/>
+    <marker id="arrow-active" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="15" markerHeight="15" markerUnits="userSpaceOnUse" orient="auto">
+      <path class="arrowhead-active" d="M0,0 L10,5 L0,10 z"/>
     </marker>
   </defs>
-  <g id="calque"></g>
+  <g id="layer"></g>
 </svg>
 
-<section id="panneau" class="replie">
-  <div id="coin">
-    <button id="b-repartir" type="button" hidden>Repartir du résumé</button>
-    <button id="jauges" type="button" aria-label="Tokens utilisés. Toucher pour changer la taille de contexte du modèle.">
-      <span class="jauge" id="j-chemin"><span>Chemin</span><span class="barre"><i></i></span><span class="val"></span></span>
-      <span class="jauge" id="j-arbre"><span>Arbre</span><span class="barre"><i></i></span><span class="val"></span></span>
+<section id="panel" class="collapsed">
+  <div id="corner">
+    <button id="btn-restart" type="button" hidden data-i18n="restartFromSummary">Restart from summary</button>
+    <button id="gauges" type="button" data-i18n-aria="gaugesLabel" aria-label="Tokens used. Tap to change the model's context size.">
+      <span class="gauge" id="gauge-path"><span data-i18n="gaugePath">Path</span><span class="bar"><i></i></span><span class="value"></span></span>
+      <span class="gauge" id="gauge-tree"><span data-i18n="gaugeTree">Tree</span><span class="bar"><i></i></span><span class="value"></span></span>
     </button>
   </div>
-  <button id="poignee" type="button" aria-expanded="false" aria-controls="corps">
-    <span id="p-kw"></span>
-    <span id="p-sum"></span>
+  <button id="handle" type="button" aria-expanded="false" aria-controls="panel-body">
+    <span id="panel-title"></span>
+    <span id="panel-summary"></span>
   </button>
-  <div id="corps">
-    <div class="onglets" role="tablist">
-      <button type="button" role="tab" data-onglet="fil" aria-selected="true">Fil</button>
-      <button type="button" role="tab" data-onglet="ctx" aria-selected="false">Contexte LLM</button>
+  <div id="panel-body">
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" data-tab="thread" aria-selected="true" data-i18n="tabThread">Thread</button>
+      <button type="button" role="tab" data-tab="context" aria-selected="false" data-i18n="tabContext">LLM context</button>
     </div>
-    <div id="fil" role="tabpanel"></div>
-    <div id="ctx" role="tabpanel" hidden></div>
+    <div id="thread" role="tabpanel"></div>
+    <div id="context" role="tabpanel" hidden></div>
   </div>
-  <form id="saisie">
-    <textarea id="question" rows="1" aria-label="Nouvelle question"></textarea>
-    <button type="submit">Envoyer</button>
+  <form id="ask-form">
+    <textarea id="question" rows="1" dir="auto" data-i18n-aria="questionLabel" aria-label="New question"></textarea>
+    <button type="submit" data-i18n="send">Send</button>
   </form>
 </section>
 
-<dialog id="reglages" aria-labelledby="titre-reglages">
-  <form id="f-reglages">
-    <h2 id="titre-reglages">Réglages du LLM</h2>
-    <p class="note">Sans clé, l'appli reste en mode démo (réponses simulées).</p>
-    <label>Clé API Anthropic
-      <input id="r-cle" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…">
+<dialog id="settings" aria-labelledby="settings-title">
+  <form id="settings-form">
+    <h2 id="settings-title" data-i18n="settingsTitle">LLM settings</h2>
+    <p class="note" data-i18n="settingsDemoNote">Without a key, the app stays in demo mode (simulated answers).</p>
+    <label><span data-i18n="apiKey">Anthropic API key</span>
+      <input id="set-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…">
     </label>
-    <label>Modèle
-      <select id="r-modele"></select>
+    <label><span data-i18n="model">Model</span>
+      <select id="set-model"></select>
     </label>
-    <label>ID d'espace de travail (seulement si l'API le demande)
-      <input id="r-espace" type="text" autocomplete="off" spellcheck="false">
+    <label><span data-i18n="workspace">Workspace ID (only if the API asks for it)</span>
+      <input id="set-workspace" type="text" autocomplete="off" spellcheck="false">
     </label>
-    <label class="case"><input id="r-retenir" type="checkbox"> Garder la clé sur cet appareil</label>
-    <p class="note">La clé reste sur cet appareil et n'est envoyée qu'à api.anthropic.com. Crée-la dans la Claude Console (platform.claude.com) et fixe-y une limite de dépenses. Si « Garder » n'est pas coché, elle est oubliée quand l'appli se ferme.</p>
+    <label class="check"><input id="set-keep" type="checkbox"> <span data-i18n="keepKey">Keep the key on this device</span></label>
+    <p class="note" data-i18n="keyNote">The key stays on this device and is only sent to api.anthropic.com.</p>
+    <label><span data-i18n="language">Interface language</span>
+      <input id="set-language" type="text" list="languages" autocomplete="off" spellcheck="false" placeholder="English">
+    </label>
+    <datalist id="languages">
+      <option value="English"><option value="Français"><option value="Español"><option value="Deutsch">
+      <option value="Italiano"><option value="Português"><option value="Nederlands"><option value="Русский">
+      <option value="العربية"><option value="עברית"><option value="हिन्दी"><option value="中文">
+      <option value="日本語"><option value="한국어"><option value="Türkçe"><option value="Polski">
+    </datalist>
+    <p class="note" data-i18n="languageNote">Translated by the AI the first time (an API key is needed), then kept on this device.</p>
     <div class="actions">
-      <button id="r-effacer" type="button">Effacer la clé</button>
-      <button id="r-fermer" type="button">Fermer</button>
-      <button class="principal" type="submit">Enregistrer</button>
+      <button id="btn-retranslate" type="button" data-i18n="retranslate">Retranslate</button>
+      <button id="btn-clear-key" type="button" data-i18n="clearKey">Clear key</button>
+      <button id="btn-close" type="button" data-i18n="close">Close</button>
+      <button class="primary" type="submit" data-i18n="save">Save</button>
     </div>
   </form>
 </dialog>

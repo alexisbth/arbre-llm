@@ -1,4 +1,4 @@
-/* arbre-llm — proof of concept (POC), v3
+/* arbre-llm — proof of concept (POC), v4
  *
  * Overall approach
  * 1. Data: a flat list of nodes { id, parent, q, a, kw, sum, ico }.
@@ -13,800 +13,934 @@
  * 7. LLM: with an Anthropic API key (kept on the device), the question is sent to Claude with the
  *    compact context; the answer streams in, then a small model fills in the node's card
  *    (keyword, emoji, summary). Without a key: simulated answers (demo mode).
+ * 8. Interface language: the English texts (UI) are translated by the LLM into the chosen
+ *    language, checked, then kept on the device. Right-to-left languages mirror the layout.
  * Security: all text is inserted with textContent (never innerHTML), no third-party script.
  */
 {
   // ---------- Settings ----------
-  const NB_ECHANGES_COMPLETS = 2;      // last exchanges of the path sent in full to the LLM
-  const CARACTERES_PAR_TOKEN = 4;      // rough estimate: 1 token ≈ 4 characters
-  const FENETRES = [200000, 128000, 32000, 100];    // context sizes offered (100: tiny, to see the alert in the demo)
-  const SEUIL_ALERTE = 0.8;            // share of the window above which the gauge turns orange
-  const ECART_X = 160;                 // horizontal gap between two leaves (px)
-  const ECART_Y = 100;                 // vertical gap between two levels (px)
-  const LARGEUR_NOEUD = 140;
-  const HAUTEUR_NOEUD = 40;
-  const RECUL_FLECHE = 7;              // the line stops before the box to leave room for the arrowhead
-  const DECALAGE_PILE = 5;             // offset of a group's "shadow" box
-  const LONGUEUR_MOT_CLE = 14;         // characters shown in a box
-  const LONGUEUR_RESUME = 90;
-  const ZOOM_MIN = 0.2, ZOOM_MAX = 3, ZOOM_MAX_CADRAGE = 1.2;
-  const SENSIBILITE_MOLETTE = 0.0015;
-  const SEUIL_TOUCHER = 8;             // px: below this, the gesture is a tap, not a drag
-  const DELAI_REPONSE_SIMULEE = 600;   // ms
-  const DELAI_CONFIRMATION = 3000;     // ms
-  const DUREE_TOAST = 2200;            // ms
-  const CLE_STOCKAGE = 'arbre-llm-v2';
-  const RACINE = 'racine';
-  const SELECTION_INITIALE = 'n3';
+  const FULL_EXCHANGES = 2;            // last exchanges of the path sent in full to the LLM
+  const CHARS_PER_TOKEN = 4;           // rough estimate: 1 token ≈ 4 characters
+  const WINDOWS = [200000, 128000, 32000, 100];     // context sizes offered (100: tiny, to see the alert in the demo)
+  const ALERT_THRESHOLD = 0.8;         // share of the window above which a gauge turns orange
+  const GAP_X = 160;                   // horizontal gap between two leaves (px)
+  const GAP_Y = 100;                   // vertical gap between two levels (px)
+  const NODE_WIDTH = 140;
+  const NODE_HEIGHT = 40;
+  const ARROW_GAP = 7;                 // the line stops before the box to leave room for the arrowhead
+  const STACK_OFFSET = 5;              // offset of a group's "shadow" box
+  const KEYWORD_LENGTH = 14;           // characters shown in a box
+  const SUMMARY_LENGTH = 90;
+  const ZOOM_MIN = 0.2, ZOOM_MAX = 3, ZOOM_MAX_FIT = 1.2;
+  const WHEEL_SENSITIVITY = 0.0015;
+  const TAP_THRESHOLD = 8;             // px: below this, the gesture is a tap, not a drag
+  const DEMO_DELAY = 600;              // ms
+  const CONFIRM_DELAY = 3000;          // ms
+  const TOAST_DURATION = 2400;         // ms
+  const STORAGE_KEY = 'arbre-llm-v3';
+  const ROOT = 'root';
+  const INITIAL_SELECTION = 'n3';
 
   // ---------- LLM: Claude through the Anthropic API ----------
   const API_URL = 'https://api.anthropic.com/v1/messages';
   const API_VERSION = '2026-10-21';
-  const MODELES = [                    // [id, label]; the first one is the default model
-    ['claude-sonnet-5-5', 'Sonnet 5.5 (équilibré)'],
-    ['claude-haiku-5-5', 'Haiku 5.5 (rapide, économique)'],
-    ['claude-opus-5-5', 'Opus 5.5 (le plus puissant)'],
+  const MODELS = [                     // [id, key of its label in UI]; the first one is the default model
+    ['claude-sonnet-5-5', 'modelSonnet'],
+    ['claude-haiku-5-5', 'modelHaiku'],
+    ['claude-opus-5-5', 'modelOpus'],
   ];
-  const MODELE_FICHE = 'claude-haiku-5-5';   // small model for the keyword, emoji and summary
-  const MAX_TOKENS_REPONSE = 4096;
-  const MAX_TOKENS_FICHE = 300;
-  const LONGUEUR_MAX_FICHE = 6000;     // characters of the answer sent to build the card
-  const LONGUEUR_MOT_CLE_MAX = 30;     // characters kept for an LLM-generated keyword
-  const CLE_REGLAGES = 'arbre-llm-reglages';
-  const CONSIGNE = "Tu réponds dans une application de conversation en arbre. Réponds dans la langue de la question, " +
-    "en texte brut, sans Markdown ni LaTeX : écris les formules en notation lisible (Unicode) et définis chaque notation.";
+  const CARD_MODEL = 'claude-haiku-5-5';     // small model for the node card and the interface translation
+  const MAX_TOKENS_ANSWER = 4096;
+  const MAX_TOKENS_CARD = 300;
+  const MAX_TOKENS_TRANSLATION = 6000;
+  const CARD_INPUT_LENGTH = 6000;      // characters of the answer sent to build the card
+  const LLM_KEYWORD_LENGTH = 30;       // characters kept for an LLM-generated keyword
+  const SETTINGS_KEY = 'arbre-llm-settings';
+  const TRANSLATIONS_KEY = 'arbre-llm-translations';
+  const INSTRUCTION = 'You are answering inside a tree-shaped conversation app. Answer in the language of the question, ' +
+    'in plain text, without Markdown or LaTeX: write formulas in a readable notation (Unicode) and define every notation.';
+
+  // ---------- Interface texts (English reference, translated by the LLM on demand) ----------
+  // {name} marks a value inserted by the code; a translation must keep exactly the same ones.
+  const UI = {
+    select: 'Select', fit: 'Fit', moreActions: 'More actions', merge: 'Merge ({count})', cancel: 'Cancel',
+    settingsMenu: 'Settings', exportJson: 'Copy as JSON', reset: 'Reset', confirmReset: 'Confirm?',
+    mapLabel: 'Conversation map', restartFromSummary: 'Restart from summary',
+    gaugesLabel: "Tokens used. Tap to change the model's context size.", gaugePath: 'Path', gaugeTree: 'Tree',
+    tabThread: 'Thread', tabContext: 'LLM context', questionLabel: 'New question', send: 'Send',
+    settingsTitle: 'Settings', settingsDemoNote: 'Without a key, the app stays in demo mode (simulated answers).',
+    apiKey: 'Anthropic API key', model: 'Model', workspace: 'Workspace ID (only if the API asks for it)',
+    keepKey: 'Keep the key on this device',
+    keyNote: 'The key stays on this device and is only sent to api.anthropic.com. Create it in the Claude Console ' +
+      '(platform.claude.com) and set a spending limit there. If the box above is unticked, the key is forgotten when the app closes.',
+    language: 'Interface language',
+    languageNote: 'Translated by the AI the first time (an API key is needed), then kept on this device.',
+    retranslate: 'Retranslate', clearKey: 'Clear key', close: 'Close', save: 'Save',
+    modelSonnet: 'Sonnet 5.5 (balanced)', modelHaiku: 'Haiku 5.5 (fast, low cost)', modelOpus: 'Opus 5.5 (most capable)',
+    modeDemo: 'POC · demo without LLM', selectHint: 'Tap the boxes to merge', rootLabel: 'Start',
+    pickTwo: 'Pick at least two boxes.', merged: '{count} boxes merged. Tap the box to expand it.', expanded: 'Box expanded',
+    rootSummary: 'Ask a first question to start a new branch.', placeholder: 'After “{keyword}”…',
+    noExchange: 'No exchange on this path yet.', retry: 'Retry', followUps: 'Follow-ups already explored from here:',
+    answering: 'Answer in progress…', nothingToSend: 'Nothing to send: a question asked here goes without context.',
+    tokensApprox: '≈ {count} tokens',
+    contextStat: 'sent to the LLM for a question asked here, versus ≈ {full} tokens for the whole path in full (exchanges: {count}).',
+    earlierSteps: 'Earlier steps: summary only', lastExchanges: 'Last exchanges: in full',
+    contextRule: 'Rule: the last {count} exchanges in full, a summary of the earlier ones, nothing from neighbouring branches. ' +
+      'Estimate: 1 token ≈ {chars} characters.',
+    contextSize: "Model's maximum context: {count} tokens", restartKeyword: 'Restart',
+    restartQuestion: 'Restart of “{keyword}” in a new conversation',
+    restartSummary: 'New conversation starting from the summary of “{keyword}”.',
+    restartDone: 'New conversation created from the summary',
+    demoAnswer: 'Demo mode: simulated answer to “{question}”.\nFor real answers, add your Anthropic API key in ⋯ → Settings.',
+    questionSummary: 'Question: {question}', interrupted: 'Answer interrupted.', llmError: 'The LLM returned an error',
+    apiKeyRejected: 'API key rejected: check it in the settings', claudeOn: 'Claude is connected',
+    demoOn: 'Demo mode: simulated answers', copied: 'Tree copied as JSON', copyRefused: 'Copy refused by the browser',
+    resetDone: 'Example tree restored', translating: 'Translating the interface…', translated: 'Interface translated',
+    translationNeedsKey: 'Translation needs an API key: the interface stays in English.',
+    translationFailed: 'Translation failed: the interface stays in English.',
+  };
 
   // ---------- Example tree (hand-written answers) ----------
-  const EXEMPLE = [
-    { id: RACINE, parent: null, ico: '🌱', kw: 'Début', q: '', a: '', sum: 'Début de la conversation.' },
-    { id: 'n1', parent: RACINE, ico: '⚖️', kw: 'CVA', q: "Qu'est-ce que la CVA ?",
-      a: "La CVA (Credit Valuation Adjustment) est l'ajustement de valeur d'un portefeuille de dérivés lié au risque de défaut de la contrepartie : c'est le prix de ce risque.",
-      sum: 'Définition : la CVA est le prix du risque de défaut de la contrepartie.' },
-    { id: 'n2', parent: 'n1', ico: '🧮', kw: 'Calcul CVA', q: 'Comment la calcule-t-on ?',
-      a: "CVA = (1 − R) × Σᵢ EE(tᵢ) × PD(tᵢ₋₁, tᵢ) × DF(tᵢ)\nR : taux de recouvrement ; EE(tᵢ) : exposition attendue à la date tᵢ ; PD(tᵢ₋₁, tᵢ) : probabilité de défaut entre tᵢ₋₁ et tᵢ ; DF(tᵢ) : facteur d'actualisation.",
-      sum: 'Formule discrète : recouvrement, exposition attendue, probabilités de défaut, actualisation.' },
-    { id: 'n3', parent: 'n2', ico: '🎲', kw: 'Monte Carlo', q: "Comment obtenir l'exposition attendue ?",
-      a: "On simule les facteurs de marché sur une grille de dates, on revalorise le portefeuille dans chaque scénario, puis on fait la moyenne de la partie positive des valeurs.",
-      sum: 'EE par Monte Carlo : diffusion, revalorisation, moyenne des expositions positives.' },
-    { id: 'n4', parent: 'n2', ico: '🛡️', kw: 'Collatéral', q: 'Et avec un collatéral ?',
-      a: "Le collatéral réduit l'exposition. Il reste un risque pendant le délai de marge (MPoR, Margin Period of Risk), durant lequel l'exposition évolue sans appel de marge.",
-      sum: "Le collatéral réduit l'EE ; le MPoR laisse un risque résiduel." },
-    { id: 'n5', parent: 'n1', ico: '🪞', kw: 'DVA', q: 'Quelle différence avec la DVA ?',
-      a: "La DVA est le symétrique de la CVA : elle valorise le risque de son propre défaut.",
-      sum: 'DVA : symétrique de la CVA, liée à son propre défaut.' },
-    { id: 'n6', parent: RACINE, ico: '🎓', kw: 'Cours', q: "Peux-tu m'aider à préparer un cours ?",
-      a: "Oui : donne-moi le public, la durée et les prérequis, et je te propose un plan.",
-      sum: 'Préparation de cours : public, durée, prérequis demandés.' },
-    { id: 'n7', parent: 'n6', ico: '🗂️', kw: 'Plan XVA', q: 'Master 2, trois heures, sur les XVA.',
-      a: "1) Pourquoi les XVA depuis 2008. 2) CVA et DVA, avec un exemple chiffré. 3) FVA, KVA, MVA et leurs débats.",
-      sum: 'Plan XVA en trois parties pour un master 2.' },
+  const EXAMPLE = [
+    { id: ROOT, parent: null, ico: '🌱', kw: 'Start', q: '', a: '', sum: '' },
+    { id: 'n1', parent: ROOT, ico: '⚖️', kw: 'CVA', q: 'What is CVA?',
+      a: "CVA (Credit Valuation Adjustment) is the value adjustment of a derivatives portfolio for the counterparty's default risk: it is the price of that risk.",
+      sum: 'Definition: CVA is the price of counterparty default risk.' },
+    { id: 'n2', parent: 'n1', ico: '🧮', kw: 'CVA formula', q: 'How is it computed?',
+      a: 'CVA = (1 − R) × Σᵢ EE(tᵢ) × PD(tᵢ₋₁, tᵢ) × DF(tᵢ)\nR: recovery rate; EE(tᵢ): expected exposure at date tᵢ; PD(tᵢ₋₁, tᵢ): probability of default between tᵢ₋₁ and tᵢ; DF(tᵢ): discount factor.',
+      sum: 'Discrete formula: recovery, expected exposure, default probabilities, discounting.' },
+    { id: 'n3', parent: 'n2', ico: '🎲', kw: 'Monte Carlo', q: 'How do we get the expected exposure?',
+      a: 'Simulate the market factors on a time grid, revalue the portfolio in each scenario, then average the positive part of the values.',
+      sum: 'EE by Monte Carlo: diffusion, revaluation, average of positive exposures.' },
+    { id: 'n4', parent: 'n2', ico: '🛡️', kw: 'Collateral', q: 'And with collateral?',
+      a: 'Collateral reduces the exposure. Some risk remains during the margin period of risk (MPoR), when the exposure moves without a margin call.',
+      sum: 'Collateral reduces EE; the MPoR leaves residual risk.' },
+    { id: 'n5', parent: 'n1', ico: '🪞', kw: 'DVA', q: 'How does it differ from DVA?',
+      a: "DVA mirrors CVA: it values the risk of one's own default.",
+      sum: "DVA: mirror of CVA, tied to one's own default." },
+    { id: 'n6', parent: ROOT, ico: '🎓', kw: 'Course', q: 'Can you help me prepare a course?',
+      a: 'Yes: tell me the audience, the length and the prerequisites, and I will suggest an outline.',
+      sum: 'Course preparation: audience, length, prerequisites requested.' },
+    { id: 'n7', parent: 'n6', ico: '🗂️', kw: 'XVA outline', q: "Master's students, three hours, on XVA.",
+      a: '1) Why XVA since 2008. 2) CVA and DVA, with a worked example. 3) FVA, KVA, MVA and the debates around them.',
+      sum: "Three-part XVA outline for a master's course." },
   ];
 
-  // Temporary icons for new questions: word stem (without accents) → emoji.
+  // Temporary icons for new questions: word stem (without accents, English or French) → emoji.
   // With an API key, the emoji is then replaced by the one the LLM chooses.
-  const ICONES = [
-    ['arbre', '🌳'], ['foret', '🌲'], ['cours', '🎓'], ['ecole', '🎓'], ['etudiant', '🎓'], ['banque', '🏦'],
-    ['argent', '💶'], ['prix', '💶'], ['cout', '💶'], ['risque', '⚠️'], ['calcul', '🧮'], ['formule', '🧮'],
-    ['date', '📅'], ['temps', '⏱️'], ['code', '💻'], ['programm', '💻'], ['donnee', '📊'], ['graph', '📈'],
-    ['marche', '📈'], ['securite', '🔒'], ['chiffr', '🔒'], ['train', '🚂'], ['locomotive', '🚂'],
-    ['voiture', '🚗'], ['livre', '📚'], ['musique', '🎵'], ['recette', '🍳'], ['cuisine', '🍳'],
-    ['voyage', '✈️'], ['maison', '🏠'], ['climat', '🌍'], ['carbone', '🌍'], ['energie', '⚡'],
-    ['robot', '🤖'], ['llm', '🤖'], ['ia', '🤖'], ['couvr', '☂️'], ['assurance', '☂️'], ['contrat', '📝'],
+  const ICONS = [
+    ['tree', '🌳'], ['arbre', '🌳'], ['forest', '🌲'], ['foret', '🌲'], ['course', '🎓'], ['cours', '🎓'],
+    ['school', '🎓'], ['ecole', '🎓'], ['student', '🎓'], ['etudiant', '🎓'], ['bank', '🏦'], ['banque', '🏦'],
+    ['money', '💶'], ['argent', '💶'], ['price', '💶'], ['prix', '💶'], ['cost', '💶'], ['cout', '💶'],
+    ['risk', '⚠️'], ['risque', '⚠️'], ['comput', '🧮'], ['calcul', '🧮'], ['formula', '🧮'], ['formule', '🧮'],
+    ['date', '📅'], ['time', '⏱️'], ['temps', '⏱️'], ['code', '💻'], ['program', '💻'], ['data', '📊'],
+    ['donnee', '📊'], ['graph', '📈'], ['chart', '📈'], ['market', '📈'], ['marche', '📈'], ['secur', '🔒'],
+    ['encrypt', '🔒'], ['chiffr', '🔒'], ['train', '🚂'], ['locomotive', '🚂'], ['car', '🚗'], ['voiture', '🚗'],
+    ['book', '📚'], ['livre', '📚'], ['music', '🎵'], ['musique', '🎵'], ['recipe', '🍳'], ['recette', '🍳'],
+    ['cook', '🍳'], ['cuisine', '🍳'], ['travel', '✈️'], ['voyage', '✈️'], ['house', '🏠'], ['maison', '🏠'],
+    ['climat', '🌍'], ['carbon', '🌍'], ['energ', '⚡'], ['robot', '🤖'], ['llm', '🤖'], ['ai', '🤖'], ['ia', '🤖'],
+    ['hedg', '☂️'], ['couvr', '☂️'], ['insur', '☂️'], ['assurance', '☂️'], ['contract', '📝'], ['contrat', '📝'],
     ['mail', '✉️'],
   ];
+  const STOP_WORDS = new Set(['what', 'which', 'with', 'that', 'this', 'does', 'from', 'about', 'there', 'their',
+    'would', 'could', 'should', 'have', 'into', 'comment', 'pourquoi', 'quelle', 'quelles', 'quels', 'quel', 'dans',
+    'avec', 'pour', 'sans', 'faire', 'peux', 'peut', 'cette', 'entre', 'sont']);
 
   // ---------- Helpers ----------
   const $ = id => document.getElementById(id);
   const SVGNS = 'http://www.w3.org/2000/svg';
-  const copie = x => JSON.parse(JSON.stringify(x));
-  const abreger = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
-  const sansAccents = s => s.normalize('NFD').replace(/\p{M}/gu, '');
-  const nouvelId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-  const etiquette = n => (n.ico ? n.ico + ' ' : '') + n.kw;
-  const formatCompact = new Intl.NumberFormat('fr-FR', { notation: 'compact', maximumFractionDigits: 1 });
-  function svgEl(nom, attrs) {
-    const e = document.createElementNS(SVGNS, nom);
+  const clone = x => JSON.parse(JSON.stringify(x));
+  const shorten = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
+  const stripAccents = s => s.normalize('NFD').replace(/\p{M}/gu, '');
+  const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const placeholders = s => (s.match(/\{\w+\}/g) || []).sort().join(',');
+  function validLocale(tag) {                  // a BCP 47 tag the browser accepts, otherwise English
+    try { return Intl.getCanonicalLocales(String(tag))[0] || 'en'; } catch { return 'en'; }
+  }
+  function svgEl(name, attrs) {
+    const e = document.createElementNS(SVGNS, name);
     for (const k in attrs) e.setAttribute(k, attrs[k]);
     return e;
   }
-  function htmlEl(nom, classe, texte) {
-    const e = document.createElement(nom);
-    if (classe) e.className = classe;
-    if (texte != null) e.textContent = texte;
+  function htmlEl(name, className, text) {
+    const e = document.createElement(name);
+    if (className) e.className = className;
+    if (text != null) e.textContent = text;
     return e;
   }
-  let minuteurToast;
+  let toastTimer;
   function toast(msg) {
-    const t = $('toast');
-    t.textContent = msg; t.classList.add('on');
-    clearTimeout(minuteurToast);
-    minuteurToast = setTimeout(() => t.classList.remove('on'), DUREE_TOAST);
+    const el = $('toast');
+    el.textContent = msg; el.classList.add('on');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('on'), TOAST_DURATION);
+  }
+  function readJson(key) {
+    try { return JSON.parse(localStorage.getItem(key)); } catch { return null; }   // storage may be unavailable
+  }
+  function writeJson(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* ignored */ }
+  }
+
+  // ---------- Translation of the interface ----------
+  let texts = {};                               // current translation (empty: English)
+  // Text for a key, in the current language, with the {name} values filled in
+  function t(key, values = {}) {
+    const s = texts[key] || UI[key];
+    return s.replace(/\{(\w+)\}/g, (m, name) => (name in values ? values[name] : m));
+  }
+  const isEnglish = language => !language || /^(en|english|anglais)$/i.test(language.trim());
+  const uiVersion = [...JSON.stringify(UI)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 0);   // changes when UI changes
+  function applyStaticTexts() {
+    document.querySelectorAll('[data-i18n]').forEach(e => { e.textContent = t(e.dataset.i18n); });
+    document.querySelectorAll('[data-i18n-aria]').forEach(e => e.setAttribute('aria-label', t(e.dataset.i18nAria)));
+    MODELS.forEach(([, labelKey], i) => { $('set-model').options[i].textContent = t(labelKey); });
+    $('subtitle').textContent = modeSelect ? t('selectHint') : modeLabel();
+    $('btn-merge').textContent = t('merge', { count: completeGroup().size });
+  }
+  function applyLanguage() {
+    const cached = isEnglish(settings.language) ? null : (readJson(TRANSLATIONS_KEY) || {})[settings.language.trim().toLowerCase()];
+    const usable = Boolean(cached && cached.version === uiVersion);
+    texts = usable ? cached.texts : {};
+    document.documentElement.lang = usable ? cached.lang : 'en';
+    document.documentElement.dir = usable ? cached.direction : 'ltr';
+    applyStaticTexts();
+    draw();
+    return usable;
+  }
+  // One call to the small model, forced to answer with a fixed format; each text is checked
+  async function translateInterface(language) {
+    const keys = Object.keys(UI);
+    const tool = {
+      name: 'interface',
+      description: 'Translation of the user-interface texts of a mobile app',
+      input_schema: {
+        type: 'object',
+        properties: {
+          lang: { type: 'string', description: 'BCP 47 code of the target language, e.g. fr, es, ar' },
+          direction: { type: 'string', enum: ['ltr', 'rtl'], description: 'Writing direction of the target language' },
+          texts: { type: 'object', properties: Object.fromEntries(keys.map(k => [k, { type: 'string' }])), required: keys },
+        },
+        required: ['lang', 'direction', 'texts'],
+      },
+    };
+    const prompt = `Translate these user-interface texts of a mobile app into this language: ${language}.\n` +
+      'Keep them short, natural and consistent with each other. Keep every placeholder in curly braces exactly as is ' +
+      '(for example {count}), keep the line breaks, and keep product and technical names unchanged ' +
+      '(Claude, Anthropic, Claude Console, api.anthropic.com, Sonnet, Haiku, Opus, JSON, LLM, API, POC).\n\n' +
+      JSON.stringify(UI, null, 1);
+    const r = await fetch(API_URL, {
+      method: 'POST', headers: apiHeaders(),
+      body: JSON.stringify({
+        model: CARD_MODEL, max_tokens: MAX_TOKENS_TRANSLATION,
+        tools: [tool], tool_choice: { type: 'tool', name: tool.name },
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+    if (!r.ok) throw await apiError(r);
+    const out = (await r.json()).content?.find(b => b.type === 'tool_use')?.input;
+    if (!out || typeof out.texts !== 'object' || !out.texts) throw new Error('empty translation');
+    const checked = {};
+    for (const k of keys) {                     // a text that lost or gained a {value} falls back to English
+      const s = out.texts[k];
+      if (typeof s === 'string' && s.trim() && placeholders(s) === placeholders(UI[k])) checked[k] = s;
+    }
+    const all = readJson(TRANSLATIONS_KEY) || {};
+    all[language.trim().toLowerCase()] = {
+      lang: validLocale(out.lang),
+      direction: out.direction === 'rtl' ? 'rtl' : 'ltr',
+      texts: checked, version: uiVersion,
+    };
+    writeJson(TRANSLATIONS_KEY, all);
+  }
+  async function changeLanguage(force) {
+    if (applyLanguage() && !force) return;      // already translated on this device
+    if (isEnglish(settings.language)) return;
+    if (!settings.key) { toast(t('translationNeedsKey')); return; }
+    toast(t('translating'));
+    try {
+      await translateInterface(settings.language);
+      applyLanguage();
+      toast(t('translated'));
+    } catch {
+      toast(t('translationFailed'));
+    }
   }
 
   // ---------- Local storage (stays on the device) ----------
-  function charger() {
-    try {
-      const e = JSON.parse(localStorage.getItem(CLE_STOCKAGE));
-      if (e && Array.isArray(e.noeuds) && e.noeuds.some(n => n.id === RACINE)) return e;
-    } catch { /* storage unavailable: start again from the example */ }
-    return null;
+  function loadState() {
+    const s = readJson(STORAGE_KEY);
+    return s && Array.isArray(s.nodes) && s.nodes.some(n => n.id === ROOT) ? s : null;
   }
-  function sauver() {
-    try { localStorage.setItem(CLE_STOCKAGE, JSON.stringify({ noeuds, selection, groupes, fenetre })); } catch { /* ignored */ }
-  }
+  function saveState() { writeJson(STORAGE_KEY, { nodes, selection, groups, window: contextWindow }); }
 
   // ---------- State ----------
-  const etat = charger() || {};
-  let noeuds = etat.noeuds || copie(EXEMPLE);
-  let selection = etat.selection || SELECTION_INITIALE;
-  let groupes = etat.groupes || [];            // [{ id, membres: [ids of the merged nodes] }]
-  let fenetre = FENETRES.includes(etat.fenetre) ? etat.fenetre : FENETRES[0];
-  for (const n of noeuds) {                    // answer cut off because the app was closed
-    if (n.enCours) Object.assign(n, { enCours: false, erreur: true, a: n.a || 'Réponse interrompue.' });
+  const state = loadState() || {};
+  let nodes = state.nodes || clone(EXAMPLE);
+  let selection = state.selection || INITIAL_SELECTION;
+  let groups = state.groups || [];             // [{ id, members: [ids of the merged nodes] }]
+  let contextWindow = WINDOWS.includes(state.window) ? state.window : WINDOWS[0];
+  for (const n of nodes) {                     // answer cut off because the app was closed
+    if (n.pending) Object.assign(n, { pending: false, error: true, a: n.a || UI.interrupted });
   }
-  let modeSelection = false;
-  const choixFusion = new Set();               // boxes tapped in selection mode
-  const vue = { x: 0, y: 0, k: 1 };            // translation (x, y) and scale k of the map
-  let S, P;                                    // visible tree and positions, recomputed on every draw
+  let modeSelect = false;
+  const ticked = new Set();                    // boxes tapped in selection mode
+  const view = { x: 0, y: 0, k: 1 };           // translation (x, y) and scale k of the map
+  let V, P;                                    // visible tree and positions, recomputed on every draw
 
   // ---------- Reading the tree ----------
-  const noeud = id => noeuds.find(n => n.id === id);
-  const enfants = id => noeuds.filter(n => n.parent === id);
-  function chemin(id) {                        // nodes from the root down to id
-    const c = [];
-    for (let n = noeud(id); n; n = noeud(n.parent)) c.unshift(n);
-    return c;
+  const node = id => nodes.find(n => n.id === id);
+  const children = id => nodes.filter(n => n.parent === id);
+  function path(id) {                          // nodes from the root down to id
+    const p = [];
+    for (let n = node(id); n; n = node(n.parent)) p.unshift(n);
+    return p;
   }
-  if (!noeud(selection)) selection = RACINE;
+  const keyword = n => (n.id === ROOT ? t('rootLabel') : n.kw);
+  const label = n => (n.ico ? n.ico + ' ' : '') + keyword(n);
+  if (!node(selection)) selection = ROOT;
 
   // Visible tree: each node belongs to a box (itself, or the group that contains it)
-  function structure() {
-    const groupeDe = {};
-    for (const g of groupes) for (const m of g.membres) groupeDe[m] = g;
-    const unite = id => (groupeDe[id] ? groupeDe[id].id : id);
-    const unites = new Map();                  // box id → { id, rep, groupe, parent }
-    for (const n of noeuds) {
-      const g = groupeDe[n.id];
-      const sommet = !g || !g.membres.includes(n.parent);   // topmost node of its group
-      if (sommet) unites.set(unite(n.id), { id: unite(n.id), rep: n, groupe: g || null, parent: n.parent == null ? null : unite(n.parent) });
+  function visibleTree() {
+    const groupOf = {};
+    for (const g of groups) for (const m of g.members) groupOf[m] = g;
+    const unit = id => (groupOf[id] ? groupOf[id].id : id);
+    const units = new Map();                   // box id → { id, rep, group, parent }
+    for (const n of nodes) {
+      const g = groupOf[n.id];
+      const top = !g || !g.members.includes(n.parent);   // topmost node of its group
+      if (top) units.set(unit(n.id), { id: unit(n.id), rep: n, group: g || null, parent: n.parent == null ? null : unit(n.parent) });
     }
-    const enfantsU = {};
-    for (const u of unites.values()) if (u.parent != null) (enfantsU[u.parent] ||= []).push(u.id);
-    return { unite, unites, enfantsU };
+    const childUnits = {};
+    for (const u of units.values()) if (u.parent != null) (childUnits[u.parent] ||= []).push(u.id);
+    return { unit, units, childUnits };
   }
 
   // ---------- Layout ----------
-  function disposer(s) {
+  function layout(v) {
     const pos = {};
-    let feuille = 0;
-    (function placer(u, profondeur) {
-      const k = s.enfantsU[u] || [];
-      k.forEach(e => placer(e, profondeur + 1));
-      const x = k.length ? (pos[k[0]].x + pos[k[k.length - 1]].x) / 2 : (feuille++) * ECART_X;
-      pos[u] = { x, y: profondeur * ECART_Y };
-    })(s.unite(RACINE), 0);
+    let leaf = 0;
+    (function place(u, depth) {
+      const k = v.childUnits[u] || [];
+      k.forEach(c => place(c, depth + 1));
+      const x = k.length ? (pos[k[0]].x + pos[k[k.length - 1]].x) / 2 : (leaf++) * GAP_X;
+      pos[u] = { x, y: depth * GAP_Y };
+    })(v.unit(ROOT), 0);
     return pos;
   }
 
   // ---------- Drawing the map ----------
-  function dessiner() {
-    S = structure();
-    P = disposer(S);
-    const surChemin = new Set(chemin(selection).map(n => S.unite(n.id)));
-    const uChoisie = S.unite(selection);
-    const aFusionner = modeSelection ? completer() : new Set();
-    const calque = $('calque');
-    calque.textContent = '';
+  function draw() {
+    V = visibleTree();
+    P = layout(V);
+    const onPath = new Set(path(selection).map(n => V.unit(n.id)));
+    const selectedUnit = V.unit(selection);
+    const toMerge = modeSelect ? completeGroup() : new Set();
+    const layer = $('layer');
+    layer.textContent = '';
 
-    const liens = [...S.unites.values()].filter(u => u.parent != null)
-      .sort((a, b) => surChemin.has(a.id) - surChemin.has(b.id));
-    for (const u of liens) {
+    const links = [...V.units.values()].filter(u => u.parent != null)
+      .sort((a, b) => onPath.has(a.id) - onPath.has(b.id));
+    for (const u of links) {
       const a = P[u.parent], b = P[u.id];
-      const y0 = a.y + HAUTEUR_NOEUD / 2, y1 = b.y - HAUTEUR_NOEUD / 2 - RECUL_FLECHE, my = (y0 + y1) / 2;
-      const actif = surChemin.has(u.id);
-      calque.append(svgEl('path', {
+      const y0 = a.y + NODE_HEIGHT / 2, y1 = b.y - NODE_HEIGHT / 2 - ARROW_GAP, my = (y0 + y1) / 2;
+      const active = onPath.has(u.id);
+      layer.append(svgEl('path', {
         d: `M${a.x},${y0} C${a.x},${my} ${b.x},${my} ${b.x},${y1}`,
-        class: actif ? 'lien actif' : 'lien',
-        'marker-end': actif ? 'url(#fleche-actif)' : 'url(#fleche)',
+        class: active ? 'link active' : 'link',
+        'marker-end': active ? 'url(#arrow-active)' : 'url(#arrow)',
       }));
     }
 
-    const L = LARGEUR_NOEUD, H = HAUTEUR_NOEUD;
-    for (const u of S.unites.values()) {
-      const membres = u.groupe ? u.groupe.membres : [u.id];
-      const classes = ['noeud'];
-      if (membres.includes(RACINE)) classes.push('racine');
-      if (u.groupe) classes.push('groupe');
-      if (u.id === uChoisie) classes.push('choisi');
-      else if (surChemin.has(u.id)) classes.push('chemin');
-      if (membres.some(m => aFusionner.has(m))) classes.push('coche', ...(membres.some(m => choixFusion.has(m)) ? [] : ['auto']));
+    const W = NODE_WIDTH, H = NODE_HEIGHT;
+    for (const u of V.units.values()) {
+      const members = u.group ? u.group.members : [u.id];
+      const classes = ['node'];
+      if (members.includes(ROOT)) classes.push('root');
+      if (u.group) classes.push('group');
+      if (u.id === selectedUnit) classes.push('selected');
+      else if (onPath.has(u.id)) classes.push('on-path');
+      if (members.some(m => toMerge.has(m))) classes.push('ticked', ...(members.some(m => ticked.has(m)) ? [] : ['auto']));
       const g = svgEl('g', { class: classes.join(' '), transform: `translate(${P[u.id].x},${P[u.id].y})`, 'data-id': u.id });
-      if (u.groupe) g.append(svgEl('rect', { class: 'pile', x: -L / 2 + DECALAGE_PILE, y: -H / 2 + DECALAGE_PILE, width: L, height: H, rx: H / 2 }));
-      g.append(svgEl('rect', { class: 'fond', x: -L / 2, y: -H / 2, width: L, height: H, rx: H / 2 }));
-      const t = svgEl('text', { 'text-anchor': 'middle', dy: '0.35em' });
-      t.textContent = (u.rep.ico ? u.rep.ico + ' ' : '') + abreger(u.rep.kw, LONGUEUR_MOT_CLE);
-      const titre = svgEl('title', {});
-      titre.textContent = u.groupe ? membres.map(m => noeud(m).kw).join(' → ') : u.rep.kw;
-      g.append(t, titre);
-      if (u.groupe) {                          // "+N" badge: number of hidden boxes
-        g.append(svgEl('circle', { class: 'badge', cx: L / 2 - 4, cy: -H / 2 + 2, r: 13 }));
-        const nb = svgEl('text', { class: 'nb', x: L / 2 - 4, y: -H / 2 + 2, 'text-anchor': 'middle', dy: '0.35em' });
-        nb.textContent = '+' + (membres.length - 1);
-        g.append(nb);
+      if (u.group) g.append(svgEl('rect', { class: 'stack', x: -W / 2 + STACK_OFFSET, y: -H / 2 + STACK_OFFSET, width: W, height: H, rx: H / 2 }));
+      g.append(svgEl('rect', { class: 'box', x: -W / 2, y: -H / 2, width: W, height: H, rx: H / 2 }));
+      const text = svgEl('text', { 'text-anchor': 'middle', dy: '0.35em' });
+      text.textContent = (u.rep.ico ? u.rep.ico + ' ' : '') + shorten(keyword(u.rep), KEYWORD_LENGTH);
+      const title = svgEl('title', {});
+      title.textContent = members.map(m => keyword(node(m))).join(' → ');
+      g.append(text, title);
+      if (u.group) {                           // "+N" badge: number of hidden boxes
+        g.append(svgEl('circle', { class: 'badge', cx: W / 2 - 4, cy: -H / 2 + 2, r: 13 }));
+        const count = svgEl('text', { class: 'count', x: W / 2 - 4, y: -H / 2 + 2, 'text-anchor': 'middle', dy: '0.35em' });
+        count.textContent = '+' + (members.length - 1);
+        g.append(count);
       }
-      calque.append(g);
+      layer.append(g);
     }
-    appliquerVue();
-    remplirPanneau();
+    applyView();
+    fillPanel();
   }
-  function appliquerVue() {
-    $('calque').setAttribute('transform', `translate(${vue.x},${vue.y}) scale(${vue.k})`);
+  function applyView() {
+    $('layer').setAttribute('transform', `translate(${view.x},${view.y}) scale(${view.k})`);
   }
 
   // Map area not covered by the top bar and the panel
-  function zoneVisible() {
-    const haut = $('barre').getBoundingClientRect().bottom;
-    const p = $('panneau').getBoundingClientRect();
-    const lateral = p.top <= haut + 1;          // large screen: panel on the right
-    return lateral ? { haut, w: p.left, h: innerHeight - haut } : { haut, w: innerWidth, h: p.top - haut };
+  function visibleArea() {
+    const top = $('topbar').getBoundingClientRect().bottom;
+    const p = $('panel').getBoundingClientRect();
+    const side = p.top <= top + 1;             // large screen: panel on the right
+    return side ? { top, w: p.left, h: innerHeight - top } : { top, w: innerWidth, h: p.top - top };
   }
-  function cadrer() {                           // whole tree visible
+  function fit() {                             // whole tree visible
     const pos = Object.values(P);
     const xs = pos.map(p => p.x), ys = pos.map(p => p.y);
-    const x0 = Math.min(...xs) - LARGEUR_NOEUD, x1 = Math.max(...xs) + LARGEUR_NOEUD;
-    const y0 = Math.min(...ys) - HAUTEUR_NOEUD, y1 = Math.max(...ys) + HAUTEUR_NOEUD;
-    const z = zoneVisible();
-    vue.k = Math.min(z.w / (x1 - x0), z.h / (y1 - y0), ZOOM_MAX_CADRAGE);
-    vue.x = (z.w - (x0 + x1) * vue.k) / 2;
-    vue.y = z.haut + (z.h - (y0 + y1) * vue.k) / 2;
-    appliquerVue();
+    const x0 = Math.min(...xs) - NODE_WIDTH, x1 = Math.max(...xs) + NODE_WIDTH;
+    const y0 = Math.min(...ys) - NODE_HEIGHT, y1 = Math.max(...ys) + NODE_HEIGHT;
+    const a = visibleArea();
+    view.k = Math.min(a.w / (x1 - x0), a.h / (y1 - y0), ZOOM_MAX_FIT);
+    view.x = (a.w - (x0 + x1) * view.k) / 2;
+    view.y = a.top + (a.h - (y0 + y1) * view.k) / 2;
+    applyView();
   }
-  function centrerSur(id) {
-    const p = P[S.unite(id)], z = zoneVisible();
-    vue.x = z.w / 2 - p.x * vue.k;
-    vue.y = z.haut + z.h / 2 - p.y * vue.k;
-    appliquerVue();
+  function centerOn(id) {
+    const p = P[V.unit(id)], a = visibleArea();
+    view.x = a.w / 2 - p.x * view.k;
+    view.y = a.top + a.h / 2 - p.y * view.k;
+    applyView();
   }
-  function estVisible(id) {                     // is the box in the uncovered part of the screen?
-    const p = P[S.unite(id)], z = zoneVisible();
-    const sx = p.x * vue.k + vue.x, sy = p.y * vue.k + vue.y;
-    return sx > 0 && sx < z.w && sy > z.haut && sy < z.haut + z.h;
+  function isVisible(id) {                     // is the box in the uncovered part of the screen?
+    const p = P[V.unit(id)], a = visibleArea();
+    const sx = p.x * view.k + view.x, sy = p.y * view.k + view.y;
+    return sx > 0 && sx < a.w && sy > a.top && sy < a.top + a.h;
   }
-  function zoomerAutour(cx, cy, facteur) {      // zoom while keeping point (cx, cy) fixed on screen
-    const k = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, vue.k * facteur));
-    const f = k / vue.k;
-    vue.x = cx - (cx - vue.x) * f;
-    vue.y = cy - (cy - vue.y) * f;
-    vue.k = k;
+  function zoomAround(cx, cy, factor) {        // zoom while keeping point (cx, cy) fixed on screen
+    const k = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, view.k * factor));
+    const f = k / view.k;
+    view.x = cx - (cx - view.x) * f;
+    view.y = cy - (cy - view.y) * f;
+    view.k = k;
   }
 
   // ---------- Gestures on the map ----------
-  const svg = $('carte');
-  const pointeurs = new Map();                  // fingers (or mouse) currently down
-  let depart = null, pincement = null;
+  const svg = $('map');
+  const pointers = new Map();                  // fingers (or mouse) currently down
+  let start = null, pinch = null;
   const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-  const milieu = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  const middle = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 
   svg.addEventListener('pointerdown', e => {
-    const cible = e.target.closest('[data-id]');
+    const target = e.target.closest('[data-id]');
     svg.setPointerCapture(e.pointerId);
-    pointeurs.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pointeurs.size === 1) depart = { x: e.clientX, y: e.clientY, cible, bouge: false };
-    if (pointeurs.size === 2) {
-      const [a, b] = [...pointeurs.values()];
-      pincement = { d: distance(a, b), m: milieu(a, b) };
-      if (depart) depart.bouge = true;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 1) start = { x: e.clientX, y: e.clientY, target, moved: false };
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      pinch = { d: distance(a, b), m: middle(a, b) };
+      if (start) start.moved = true;
     }
   });
   svg.addEventListener('pointermove', e => {
-    const avant = pointeurs.get(e.pointerId);
-    if (!avant) return;
-    const apres = { x: e.clientX, y: e.clientY };
-    pointeurs.set(e.pointerId, apres);
-    if (pointeurs.size === 1) {
-      vue.x += apres.x - avant.x;
-      vue.y += apres.y - avant.y;
-      if (depart && distance(apres, depart) > SEUIL_TOUCHER) depart.bouge = true;
-    } else if (pointeurs.size === 2 && pincement) {
-      const [a, b] = [...pointeurs.values()];
-      const d = distance(a, b), m = milieu(a, b);
-      zoomerAutour(m.x, m.y, d / pincement.d);
-      vue.x += m.x - pincement.m.x;
-      vue.y += m.y - pincement.m.y;
-      pincement = { d, m };
+    const before = pointers.get(e.pointerId);
+    if (!before) return;
+    const after = { x: e.clientX, y: e.clientY };
+    pointers.set(e.pointerId, after);
+    if (pointers.size === 1) {
+      view.x += after.x - before.x;
+      view.y += after.y - before.y;
+      if (start && distance(after, start) > TAP_THRESHOLD) start.moved = true;
+    } else if (pointers.size === 2 && pinch) {
+      const [a, b] = [...pointers.values()];
+      const d = distance(a, b), m = middle(a, b);
+      zoomAround(m.x, m.y, d / pinch.d);
+      view.x += m.x - pinch.m.x;
+      view.y += m.y - pinch.m.y;
+      pinch = { d, m };
     }
-    appliquerVue();
+    applyView();
   });
-  function relacher(e) {
-    if (!pointeurs.delete(e.pointerId)) return;
-    if (pointeurs.size < 2) pincement = null;
-    if (pointeurs.size === 0) {
-      if (depart && !depart.bouge && depart.cible) toucher(depart.cible.getAttribute('data-id'));
-      depart = null;
+  function release(e) {
+    if (!pointers.delete(e.pointerId)) return;
+    if (pointers.size < 2) pinch = null;
+    if (pointers.size === 0) {
+      if (start && !start.moved && start.target) tap(start.target.getAttribute('data-id'));
+      start = null;
     }
   }
-  svg.addEventListener('pointerup', relacher);
-  svg.addEventListener('pointercancel', relacher);
+  svg.addEventListener('pointerup', release);
+  svg.addEventListener('pointercancel', release);
   svg.addEventListener('wheel', e => {
     e.preventDefault();
-    zoomerAutour(e.clientX, e.clientY, Math.exp(-e.deltaY * SENSIBILITE_MOLETTE));
-    appliquerVue();
+    zoomAround(e.clientX, e.clientY, Math.exp(-e.deltaY * WHEEL_SENSITIVITY));
+    applyView();
   }, { passive: false });
   document.addEventListener('gesturestart', e => e.preventDefault());   // Safari: block page zoom
 
   // Tapping a box: select it, expand a group, or tick it in selection mode
-  function toucher(idCase) {
-    const u = S.unites.get(idCase);
+  function tap(unitId) {
+    const u = V.units.get(unitId);
     if (!u) return;
-    if (modeSelection) {
-      const ids = u.groupe ? u.groupe.membres : [u.id];
-      const dejaCoches = ids.every(i => choixFusion.has(i));
-      ids.forEach(i => (dejaCoches ? choixFusion.delete(i) : choixFusion.add(i)));
-      majBoutonFusion();
-      dessiner();
+    if (modeSelect) {
+      const ids = u.group ? u.group.members : [u.id];
+      const allTicked = ids.every(i => ticked.has(i));
+      ids.forEach(i => (allTicked ? ticked.delete(i) : ticked.add(i)));
+      draw();
+      $('btn-merge').textContent = t('merge', { count: completeGroup().size });
       return;
     }
-    if (u.groupe) { eclater(u.groupe.id); return; }
-    choisir(u.id, false);
+    if (u.group) { expand(u.group.id); return; }
+    select(u.id, false);
   }
 
   // ---------- Selecting a node ----------
-  function choisir(id, recentrer) {
+  function select(id, recenter) {
     selection = id;
-    sauver();
-    dessiner();
-    if (recentrer || !estVisible(id)) centrerSur(id);
+    saveState();
+    draw();
+    if (recenter || !isVisible(id)) centerOn(id);
   }
 
   // ---------- Merging and expanding ----------
   // Adds to the ticked boxes the ones that connect them: start from their lowest common
   // ancestor and add every node on the paths leading down from it to them.
-  function completer() {
-    const chemins = [...choixFusion].filter(noeud).map(id => chemin(id).map(n => n.id));
-    if (!chemins.length) return new Set();
-    let k = 0;                                  // length of the prefix shared by all paths
-    while (chemins.every(c => k < c.length && c[k] === chemins[0][k])) k++;
-    const groupe = new Set();
-    for (const c of chemins) c.slice(k - 1).forEach(id => groupe.add(id));
-    return groupe;
+  function completeGroup() {
+    const paths = [...ticked].filter(node).map(id => path(id).map(n => n.id));
+    if (!paths.length) return new Set();
+    let k = 0;                                 // length of the prefix shared by all paths
+    while (paths.every(p => k < p.length && p[k] === paths[0][k])) k++;
+    const group = new Set();
+    for (const p of paths) p.slice(k - 1).forEach(id => group.add(id));
+    return group;
   }
-  function majBoutonFusion() {
-    $('b-fusionner').textContent = `Fusionner (${completer().size})`;
+  function setSelectMode(on) {
+    modeSelect = on;
+    ticked.clear();
+    document.body.classList.toggle('select-mode', on);
+    closeMenu();
+    applyStaticTexts();
+    draw();
   }
-  function passerEnSelection(actif) {
-    modeSelection = actif;
-    choixFusion.clear();
-    document.body.classList.toggle('mode-selection', actif);
-    $('sous-titre').textContent = actif ? 'Touche les cases à fusionner' : libelleMode();
-    fermerMenu();
-    majBoutonFusion();
-    dessiner();
-  }
-  function fusionner() {
-    const membres = completer();
-    if (membres.size < 2) { toast('Choisis au moins deux cases.'); return; }
-    const autres = [];
-    for (const g of groupes) {                  // an existing group that touches the selection is absorbed
-      if (g.membres.some(m => membres.has(m))) g.membres.forEach(m => membres.add(m));
-      else autres.push(g);
+  function merge() {
+    const members = completeGroup();
+    if (members.size < 2) { toast(t('pickTwo')); return; }
+    const others = [];
+    for (const g of groups) {                  // an existing group that touches the selection is absorbed
+      if (g.members.some(m => members.has(m))) g.members.forEach(m => members.add(m));
+      else others.push(g);
     }
-    groupes = [...autres, { id: 'g' + nouvelId(), membres: [...membres] }];
-    sauver();
-    passerEnSelection(false);
-    toast(`${membres.size} cases fusionnées. Touche la case pour l'éclater.`);
+    groups = [...others, { id: 'g' + newId(), members: [...members] }];
+    saveState();
+    setSelectMode(false);
+    toast(t('merged', { count: members.size }));
   }
-  function eclater(idGroupe) {
-    groupes = groupes.filter(g => g.id !== idGroupe);
-    sauver();
-    dessiner();
-    toast('Case éclatée');
+  function expand(groupId) {
+    groups = groups.filter(g => g.id !== groupId);
+    saveState();
+    draw();
+    toast(t('expanded'));
   }
 
   // ---------- Panel: thread, context, gauges ----------
-  function remplirPanneau() {
-    const n = noeud(selection);
-    $('p-kw').textContent = etiquette(n);
-    $('p-sum').textContent = n.id === RACINE ? 'Pose une première question pour démarrer une nouvelle branche.' : n.sum;
-    $('question').placeholder = `Après « ${abreger(n.kw, LONGUEUR_MOT_CLE)} »…`;
+  function fillPanel() {
+    const n = node(selection);
+    $('panel-title').textContent = label(n);
+    $('panel-summary').textContent = n.id === ROOT ? t('rootSummary') : n.sum;
+    $('question').placeholder = t('placeholder', { keyword: shorten(keyword(n), KEYWORD_LENGTH) });
 
-    const c = chemin(selection).filter(m => m.id !== RACINE);
-    const fil = $('fil');
-    fil.textContent = '';
-    if (!c.length) fil.append(htmlEl('p', 'vide', 'Aucun échange sur ce chemin pour le moment.'));
-    c.forEach((m, i) => {
-      if (i > 0) fil.append(htmlEl('div', 'fleche-fil', '↓'));
-      const bloc = htmlEl('article', 'echange' + (m.id === selection ? ' courant' : '') + (m.erreur ? ' erreur' : ''));
-      bloc.dataset.id = m.id;
-      bloc.append(htmlEl('p', 'kw', etiquette(m)), htmlEl('p', 'q', m.q), htmlEl('p', 'a', texteReponse(m)));
-      if (m.erreur) {
-        const b = htmlEl('button', 'reessayer', 'Réessayer');
+    const p = path(selection).filter(m => m.id !== ROOT);
+    const thread = $('thread');
+    thread.textContent = '';
+    if (!p.length) thread.append(htmlEl('p', 'empty', t('noExchange')));
+    p.forEach((m, i) => {
+      if (i > 0) thread.append(htmlEl('div', 'thread-arrow', '↓'));
+      const block = htmlEl('article', 'exchange' + (m.id === selection ? ' current' : '') + (m.error ? ' error' : ''));
+      block.dataset.id = m.id;
+      block.append(htmlEl('p', 'kw', label(m)), htmlEl('p', 'q', m.q), htmlEl('p', 'a', answerText(m)));
+      if (m.error) {
+        const b = htmlEl('button', 'retry', t('retry'));
         b.type = 'button';
-        b.dataset.reessayer = m.id;
-        bloc.append(b);
+        b.dataset.retry = m.id;
+        block.append(b);
       }
-      fil.append(bloc);
+      thread.append(block);
     });
-    const suites = enfants(selection);
-    if (suites.length) {
-      const d = htmlEl('div', 'suites');
-      d.append(htmlEl('p', null, 'Suites déjà explorées depuis ce nœud :'));
-      for (const s of suites) {
-        const b = htmlEl('button', null, etiquette(s));
+    const next = children(selection);
+    if (next.length) {
+      const d = htmlEl('div', 'follow-ups');
+      d.append(htmlEl('p', null, t('followUps')));
+      for (const c of next) {
+        const b = htmlEl('button', null, label(c));
         b.type = 'button';
-        b.dataset.id = s.id;
+        b.dataset.id = c.id;
         d.append(b);
       }
-      fil.append(d);
+      thread.append(d);
     }
-    requestAnimationFrame(() => fil.querySelector('.courant')?.scrollIntoView({ block: 'nearest' }));
-    remplirContexte(c);
-    remplirJauges(c);
+    requestAnimationFrame(() => thread.querySelector('.current')?.scrollIntoView({ block: 'nearest' }));
+    fillContext(p);
+    fillGauges(p);
   }
 
-  const texteReponse = n => n.a || (n.enCours ? 'Réponse en cours…' : '');
-  const tokens = nbCar => Math.ceil(nbCar / CARACTERES_PAR_TOKEN);
-  const somme = (liste, f) => liste.reduce((s, n) => s + f(n), 0);
-  const tailleEchange = n => n.q.length + n.a.length;
+  const answerText = n => n.a || (n.pending ? t('answering') : '');
+  const tokens = chars => Math.ceil(chars / CHARS_PER_TOKEN);
+  const sum = (list, f) => list.reduce((s, n) => s + f(n), 0);
+  const exchangeSize = n => n.q.length + n.a.length;
   // Tokens of an exchange: actual answer count returned by the API when known, otherwise an estimate
-  const tokensEchange = n => (n.usage ? tokens(n.q.length) + n.usage.sortie : tokens(tailleEchange(n)));
+  const exchangeTokens = n => (n.usage ? tokens(n.q.length) + n.usage.output : tokens(exchangeSize(n)));
 
-  // Splits a path: earlier steps (summary only) and the last NB_ECHANGES_COMPLETS exchanges
-  function decouper(c) {
-    const coupe = Math.max(0, c.length - NB_ECHANGES_COMPLETS);
-    return { resumes: c.slice(0, coupe), complets: c.slice(coupe) };
+  // Splits a path: earlier steps (summary only) and the last FULL_EXCHANGES exchanges
+  function split(p) {
+    const cut = Math.max(0, p.length - FULL_EXCHANGES);
+    return { earlier: p.slice(0, cut), recent: p.slice(cut) };
   }
 
-  // Compact context: summary of earlier steps + the last NB_ECHANGES_COMPLETS exchanges in full
-  function remplirContexte(c) {
-    const ctx = $('ctx');
-    ctx.textContent = '';
-    if (!c.length) {
-      ctx.append(htmlEl('p', 'vide', 'Rien à envoyer : une question posée ici partira sans contexte.'));
-      return;
-    }
-    const { resumes, complets } = decouper(c);
-    const compact = somme(resumes, n => n.kw.length + n.sum.length) + somme(complets, tailleEchange);
-    const complet = somme(c, tailleEchange);
+  // Compact context: summary of earlier steps + the last FULL_EXCHANGES exchanges in full
+  function fillContext(p) {
+    const box = $('context');
+    box.textContent = '';
+    if (!p.length) { box.append(htmlEl('p', 'empty', t('nothingToSend'))); return; }
+    const { earlier, recent } = split(p);
+    const compact = sum(earlier, n => n.kw.length + n.sum.length) + sum(recent, exchangeSize);
+    const full = sum(p, exchangeSize);
 
     const stat = htmlEl('div', 'stat');
-    const chiffre = htmlEl('p', 'chiffre');
-    chiffre.append(htmlEl('mark', null, `≈ ${tokens(compact)} tokens`));
-    stat.append(chiffre, htmlEl('p', null,
-      `envoyés au LLM pour une question posée ici, contre ≈ ${tokens(complet)} tokens pour tout le chemin en entier (${c.length} échange${c.length > 1 ? 's' : ''}).`));
-    ctx.append(stat);
+    const figure = htmlEl('p', 'figure');
+    figure.append(htmlEl('mark', null, t('tokensApprox', { count: tokens(compact) })));
+    stat.append(figure, htmlEl('p', null, t('contextStat', { full: tokens(full), count: p.length })));
+    box.append(stat);
 
-    if (resumes.length) {
-      ctx.append(htmlEl('h3', null, 'Étapes anciennes : résumé seulement'));
+    if (earlier.length) {
+      box.append(htmlEl('h3', null, t('earlierSteps')));
       const ul = htmlEl('ul');
-      for (const n of resumes) ul.append(htmlEl('li', null, `${etiquette(n)} : ${n.sum}`));
-      ctx.append(ul);
+      for (const n of earlier) ul.append(htmlEl('li', null, `${label(n)}: ${n.sum}`));
+      box.append(ul);
     }
-    const pl = complets.length > 1 ? 's' : '';
-    ctx.append(htmlEl('h3', null, `Dernier${pl} échange${pl} : en entier`));
-    complets.forEach((n, i) => {
-      if (i > 0) ctx.append(htmlEl('div', 'fleche-fil', '↓'));
-      const b = htmlEl('div', 'echange');
+    box.append(htmlEl('h3', null, t('lastExchanges')));
+    recent.forEach((n, i) => {
+      if (i > 0) box.append(htmlEl('div', 'thread-arrow', '↓'));
+      const b = htmlEl('div', 'exchange');
       b.append(htmlEl('p', 'q', n.q), htmlEl('p', 'a', n.a));
-      ctx.append(b);
+      box.append(b);
     });
-    ctx.append(htmlEl('p', 'note',
-      `Règle : les ${NB_ECHANGES_COMPLETS} derniers échanges en entier, le résumé des précédents, rien des branches voisines. Estimation : 1 token ≈ ${CARACTERES_PAR_TOKEN} caractères.`));
+    box.append(htmlEl('p', 'note', t('contextRule', { count: FULL_EXCHANGES, chars: CHARS_PER_TOKEN })));
   }
 
   // Two gauges: tokens of the current path and of the whole tree, relative to the model's window
-  function remplirJauges(c) {
-    const ratioChemin = majJauge('j-chemin', somme(c, tokensEchange));
-    majJauge('j-arbre', somme(noeuds, tokensEchange));
-    $('b-repartir').hidden = !(ratioChemin >= SEUIL_ALERTE && c.length > 0);
+  const compactFormat = () => new Intl.NumberFormat(validLocale(document.documentElement.lang), { notation: 'compact', maximumFractionDigits: 1 });
+  function fillGauges(p) {
+    const pathRatio = setGauge('gauge-path', sum(p, exchangeTokens));
+    setGauge('gauge-tree', sum(nodes, exchangeTokens));
+    $('btn-restart').hidden = !(pathRatio >= ALERT_THRESHOLD && p.length > 0);
   }
-  function majJauge(id, nbTokens) {
-    const ratio = nbTokens / fenetre;
-    const j = $(id);
-    j.querySelector('i').style.width = Math.min(100, ratio * 100) + '%';
-    j.querySelector('.val').textContent = `${formatCompact.format(nbTokens)} / ${formatCompact.format(fenetre)}`;
-    j.classList.toggle('alerte', ratio >= SEUIL_ALERTE);
+  function setGauge(id, count) {
+    const ratio = count / contextWindow, f = compactFormat();
+    const g = $(id);
+    g.querySelector('i').style.width = Math.min(100, ratio * 100) + '%';
+    g.querySelector('.value').textContent = `${f.format(count)} / ${f.format(contextWindow)}`;
+    g.classList.toggle('alert', ratio >= ALERT_THRESHOLD);
     return ratio;
   }
-  $('jauges').addEventListener('click', () => {
-    fenetre = FENETRES[(FENETRES.indexOf(fenetre) + 1) % FENETRES.length];
-    sauver();
-    remplirPanneau();
-    toast(`Contexte maximal du modèle : ${formatCompact.format(fenetre)} tokens`);
+  $('gauges').addEventListener('click', () => {
+    contextWindow = WINDOWS[(WINDOWS.indexOf(contextWindow) + 1) % WINDOWS.length];
+    saveState();
+    fillPanel();
+    toast(t('contextSize', { count: compactFormat().format(contextWindow) }));
   });
 
   // Restart from the summary: a new conversation whose starting point is the path's summary
-  $('b-repartir').addEventListener('click', () => {
-    const origine = noeud(selection);
-    const c = chemin(selection).filter(m => m.id !== RACINE);
-    const n = { id: 'n' + nouvelId(), parent: RACINE, ico: '♻️', kw: 'Reprise',
-      q: `Reprise de « ${origine.kw} » dans une nouvelle conversation`,
-      a: c.map(m => `${etiquette(m)} : ${m.sum}`).join('\n'),
-      sum: `Nouvelle conversation qui part du résumé de « ${origine.kw} ».` };
-    noeuds.push(n);
-    choisir(n.id, true);
-    toast('Nouvelle conversation créée à partir du résumé');
+  $('btn-restart').addEventListener('click', () => {
+    const origin = node(selection);
+    const p = path(selection).filter(m => m.id !== ROOT);
+    const n = { id: 'n' + newId(), parent: ROOT, ico: '♻️', kw: t('restartKeyword'),
+      q: t('restartQuestion', { keyword: keyword(origin) }),
+      a: p.map(m => `${label(m)}: ${m.sum}`).join('\n'),
+      sum: t('restartSummary', { keyword: keyword(origin) }) };
+    nodes.push(n);
+    select(n.id, true);
+    toast(t('restartDone'));
   });
 
-  $('fil').addEventListener('click', e => {
-    const r = e.target.closest('[data-reessayer]');
-    if (r) { repondre(noeud(r.dataset.reessayer)); return; }
+  $('thread').addEventListener('click', e => {
+    const r = e.target.closest('[data-retry]');
+    if (r) { answer(node(r.dataset.retry)); return; }
     const c = e.target.closest('[data-id]');
-    if (c) choisir(c.dataset.id, true);
+    if (c) select(c.dataset.id, true);
   });
-  $('poignee').addEventListener('click', () => {
-    const ouvert = $('panneau').classList.toggle('replie') === false;
-    $('poignee').setAttribute('aria-expanded', String(ouvert));
-    centrerSur(selection);
-    if (ouvert) requestAnimationFrame(() => $('fil').querySelector('.courant')?.scrollIntoView({ block: 'nearest' }));
+  $('handle').addEventListener('click', () => {
+    const open = $('panel').classList.toggle('collapsed') === false;
+    $('handle').setAttribute('aria-expanded', String(open));
+    centerOn(selection);
+    if (open) requestAnimationFrame(() => $('thread').querySelector('.current')?.scrollIntoView({ block: 'nearest' }));
   });
-  document.querySelectorAll('[data-onglet]').forEach(b => b.addEventListener('click', () => {
-    document.querySelectorAll('[data-onglet]').forEach(o => {
-      const actif = o === b;
-      o.setAttribute('aria-selected', String(actif));
-      $(o.dataset.onglet).hidden = !actif;
+  document.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll('[data-tab]').forEach(o => {
+      const active = o === b;
+      o.setAttribute('aria-selected', String(active));
+      $(o.dataset.tab).hidden = !active;
     });
   }));
 
   // ---------- New question ----------
-  const MOTS_VIDES = new Set(['comment', 'pourquoi', 'quelle', 'quelles', 'quels', 'quel', 'dans', 'avec',
-    'pour', 'sans', 'faire', 'peux', 'peut', 'cette', 'entre', 'sont', 'what', 'with', 'that', 'this', 'does', 'from']);
-  function motCle(q) {                // temporary: the longest meaningful word (replaced by the LLM's card)
-    const mots = q.match(/[\p{L}\p{N}'-]+/gu) || [];
-    const m = mots.filter(w => w.length >= 4 && !MOTS_VIDES.has(w.toLowerCase()))
-      .sort((a, b) => b.length - a.length)[0] || mots[0] || 'Question';
-    return m[0].toUpperCase() + m.slice(1);
+  function guessKeyword(q) {          // temporary: the longest meaningful word (replaced by the LLM's card)
+    const words = q.match(/[\p{L}\p{N}'-]+/gu) || [];
+    const w = words.filter(x => x.length >= 4 && !STOP_WORDS.has(x.toLowerCase()))
+      .sort((a, b) => b.length - a.length)[0] || words[0] || 'Question';
+    return w[0].toUpperCase() + w.slice(1);
   }
-  function icone(q) {                 // temporary: first word found in ICONES, otherwise no icon
-    const mots = sansAccents(q.toLowerCase()).match(/[a-z0-9]+/g) || [];
-    for (const [racine, ico] of ICONES) {
-      if (mots.some(m => (racine.length <= 3 ? m === racine : m.startsWith(racine)))) return ico;
+  function guessIcon(q) {             // temporary: first word found in ICONS, otherwise no icon
+    const words = stripAccents(q.toLowerCase()).match(/[a-z0-9]+/g) || [];
+    for (const [stem, ico] of ICONS) {
+      if (words.some(w => (stem.length <= 3 ? w === stem : w.startsWith(stem)))) return ico;
     }
     return '';
   }
-  const reponseSimulee = q => `Mode démo : réponse simulée à « ${q} ».\nPour de vraies réponses, ajoute ta clé API Anthropic dans ⋯ → Réglages du LLM.`;
 
-  const champ = $('question');
-  champ.addEventListener('input', () => {
-    champ.style.height = 'auto';
-    champ.style.height = champ.scrollHeight + 'px';
+  const input = $('question');
+  input.addEventListener('input', () => {
+    input.style.height = 'auto';
+    input.style.height = input.scrollHeight + 'px';
   });
-  champ.addEventListener('keydown', e => {
+  input.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey && !matchMedia('(pointer: coarse)').matches) {
       e.preventDefault();
-      $('saisie').requestSubmit();
+      $('ask-form').requestSubmit();
     }
   });
-  $('saisie').addEventListener('submit', e => {
+  $('ask-form').addEventListener('submit', e => {
     e.preventDefault();
-    const q = champ.value.trim();
+    const q = input.value.trim();
     if (!q) return;
     // Temporary keyword, icon and summary, replaced by the LLM's card once the answer has arrived
-    const n = { id: 'n' + nouvelId(), parent: selection, q, a: '',
-      ico: icone(q), kw: motCle(q), sum: 'Question : ' + abreger(q, LONGUEUR_RESUME) };
-    noeuds.push(n);
-    champ.value = '';
-    champ.style.height = '';
-    repondre(n);
-    choisir(n.id, true);
+    const n = { id: 'n' + newId(), parent: selection, q, a: '',
+      ico: guessIcon(q), kw: guessKeyword(q), sum: t('questionSummary', { question: shorten(q, SUMMARY_LENGTH) }) };
+    nodes.push(n);
+    input.value = '';
+    input.style.height = '';
+    answer(n);
+    select(n.id, true);
   });
 
   // ---------- Answer: Claude if a key is set, otherwise a simulated answer ----------
-  async function repondre(n) {
-    Object.assign(n, { enCours: true, erreur: false, a: '' });
+  async function answer(n) {
+    Object.assign(n, { pending: true, error: false, a: '' });
     delete n.usage;
-    if (selection === n.id) remplirPanneau();
-    if (!reglages.cle) {
+    if (selection === n.id) fillPanel();
+    if (!settings.key) {
       setTimeout(() => {
-        Object.assign(n, { enCours: false, a: reponseSimulee(n.q) });
-        sauver();
-        if (selection === n.id) remplirPanneau();
-      }, DELAI_REPONSE_SIMULEE);
+        Object.assign(n, { pending: false, a: t('demoAnswer', { question: n.q }) });
+        saveState();
+        if (selection === n.id) fillPanel();
+      }, DEMO_DELAY);
       return;
     }
     try {
-      await demanderClaude(n);
-      n.enCours = false;
-      sauver();
-      if (selection === n.id) remplirPanneau();
-      try { await ficherEchange(n); } catch { /* card is optional: keep the temporary keyword */ }
+      await askClaude(n);
+      n.pending = false;
+      saveState();
+      if (selection === n.id) fillPanel();
+      try { await fillCard(n); } catch { /* card is optional: keep the temporary keyword */ }
     } catch (err) {
-      Object.assign(n, { enCours: false, erreur: true, a: '⚠️ ' + err.message });
-      toast('Le LLM a renvoyé une erreur');
+      Object.assign(n, { pending: false, error: true, a: '⚠️ ' + err.message });
+      toast(t('llmError'));
     }
-    sauver();
-    dessiner();
+    saveState();
+    draw();
   }
 
-  function enTetes() {
+  function apiHeaders() {
     const h = {
       'content-type': 'application/json',
-      'x-api-key': reglages.cle,
+      'x-api-key': settings.key,
       'anthropic-version': API_VERSION,
       'anthropic-dangerous-direct-browser-access': 'true',   // allows calling the API directly from a browser
     };
-    if (reglages.espace) h['anthropic-workspace-id'] = reglages.espace;
+    if (settings.workspace) h['anthropic-workspace-id'] = settings.workspace;
     return h;
   }
-  async function erreurApi(r) {
-    let msg = `Erreur ${r.status}`;
-    try { const j = await r.json(); if (j.error?.message) msg += ' : ' + j.error.message; } catch { /* unreadable body */ }
-    if (r.status === 401) msg += ' (clé API refusée : vérifie-la dans les réglages)';
+  async function apiError(r) {
+    let msg = `Error ${r.status}`;
+    try { const j = await r.json(); if (j.error?.message) msg += ': ' + j.error.message; } catch { /* unreadable body */ }
+    if (r.status === 401) msg += ` (${t('apiKeyRejected')})`;
     return new Error(msg);
   }
 
   // Request: instruction + summary of earlier steps, then the last exchanges in full, then the question
-  function construireRequete(n) {
-    const c = chemin(n.parent).filter(m => m.id !== RACINE);
-    const { resumes, complets } = decouper(c);
-    let systeme = CONSIGNE;
-    if (resumes.length) {
-      systeme += '\n\nRésumé des étapes précédentes de cette branche :\n' + resumes.map(m => `- ${m.kw} : ${m.sum}`).join('\n');
-    }
+  function buildRequest(n) {
+    const { earlier, recent } = split(path(n.parent).filter(m => m.id !== ROOT));
+    let system = INSTRUCTION;
+    if (earlier.length) system += '\n\nSummary of the earlier steps of this branch:\n' + earlier.map(m => `- ${m.kw}: ${m.sum}`).join('\n');
     const messages = [];
-    for (const m of complets) {
-      if (m.a && !m.erreur) messages.push({ role: 'user', content: m.q }, { role: 'assistant', content: m.a });
+    for (const m of recent) {
+      if (m.a && !m.error) messages.push({ role: 'user', content: m.q }, { role: 'assistant', content: m.a });
     }
     messages.push({ role: 'user', content: n.q });
-    return { system: systeme, messages };
+    return { system, messages };
   }
 
   // Streaming call: the answer is displayed as it arrives
-  async function demanderClaude(n) {
+  async function askClaude(n) {
     const r = await fetch(API_URL, {
-      method: 'POST', headers: enTetes(),
-      body: JSON.stringify({ model: reglages.modele, max_tokens: MAX_TOKENS_REPONSE, stream: true, ...construireRequete(n) }),
+      method: 'POST', headers: apiHeaders(),
+      body: JSON.stringify({ model: settings.model, max_tokens: MAX_TOKENS_ANSWER, stream: true, ...buildRequest(n) }),
     });
-    if (!r.ok) throw await erreurApi(r);
-    const lecteur = r.body.getReader(), decodeur = new TextDecoder();
-    let tampon = '';
-    n.usage = { entree: 0, sortie: 0 };
+    if (!r.ok) throw await apiError(r);
+    const reader = r.body.getReader(), decoder = new TextDecoder();
+    let buffer = '';
+    n.usage = { input: 0, output: 0 };
     for (;;) {
-      const { done, value } = await lecteur.read();
+      const { done, value } = await reader.read();
       if (done) break;
-      tampon += decodeur.decode(value, { stream: true }).replace(/\r/g, '');
-      const evenements = tampon.split('\n\n');
-      tampon = evenements.pop();                  // last chunk, possibly incomplete
-      for (const ev of evenements) {
-        const ligne = ev.split('\n').find(l => l.startsWith('data:'));
-        if (!ligne) continue;
-        const d = JSON.parse(ligne.slice(5));
-        if (d.type === 'message_start') n.usage.entree = d.message.usage.input_tokens;
-        else if (d.type === 'content_block_delta' && d.delta.type === 'text_delta') { n.a += d.delta.text; afficherFlux(n); }
-        else if (d.type === 'message_delta' && d.usage) n.usage.sortie = d.usage.output_tokens;
+      buffer += decoder.decode(value, { stream: true }).replace(/\r/g, '');
+      const events = buffer.split('\n\n');
+      buffer = events.pop();                   // last chunk, possibly incomplete
+      for (const ev of events) {
+        const line = ev.split('\n').find(l => l.startsWith('data:'));
+        if (!line) continue;
+        const d = JSON.parse(line.slice(5));
+        if (d.type === 'message_start') n.usage.input = d.message.usage.input_tokens;
+        else if (d.type === 'content_block_delta' && d.delta.type === 'text_delta') { n.a += d.delta.text; showStream(n); }
+        else if (d.type === 'message_delta' && d.usage) n.usage.output = d.usage.output_tokens;
         else if (d.type === 'error') throw new Error(d.error.message);
-      }                                            // other events (ping…) are ignored
+      }                                        // other events (ping…) are ignored
     }
   }
-  function afficherFlux(n) {                     // updates only the answer text
+  function showStream(n) {                     // updates only the answer text
     if (selection !== n.id) return;
-    const p = document.querySelector(`#fil [data-id="${CSS.escape(n.id)}"] .a`);
+    const p = document.querySelector(`#thread [data-id="${CSS.escape(n.id)}"] .a`);
     if (p) p.textContent = n.a;
   }
 
   // Node card: the small model is forced to answer through a "tool" with a fixed format
-  const OUTIL_FICHE = {
-    name: 'fiche',
-    description: "Fiche de synthèse d'un échange question-réponse",
+  const CARD_TOOL = {
+    name: 'card',
+    description: 'Summary card of a question-answer exchange',
     input_schema: {
       type: 'object',
       properties: {
-        mot_cle: { type: 'string', description: "1 à 3 mots qui résument l'échange" },
-        emoji: { type: 'string', description: "Un seul emoji qui illustre le sujet, ou une chaîne vide si aucun n'est vraiment illustratif" },
-        resume: { type: 'string', description: "Résumé de l'échange en 25 mots maximum, réutilisable comme contexte" },
+        keyword: { type: 'string', description: '1 to 3 words that sum up the exchange' },
+        emoji: { type: 'string', description: 'A single emoji that illustrates the topic, or an empty string if none is really illustrative' },
+        summary: { type: 'string', description: 'Summary of the exchange in 25 words at most, reusable as context' },
       },
-      required: ['mot_cle', 'emoji', 'resume'],
+      required: ['keyword', 'emoji', 'summary'],
     },
   };
-  async function ficherEchange(n) {
+  async function fillCard(n) {
     const r = await fetch(API_URL, {
-      method: 'POST', headers: enTetes(),
+      method: 'POST', headers: apiHeaders(),
       body: JSON.stringify({
-        model: MODELE_FICHE, max_tokens: MAX_TOKENS_FICHE,
-        tools: [OUTIL_FICHE], tool_choice: { type: 'tool', name: OUTIL_FICHE.name },
-        messages: [{ role: 'user', content: `Question : ${n.q}\n\nRéponse : ${n.a.slice(0, LONGUEUR_MAX_FICHE)}\n\nRemplis la fiche de cet échange, dans la langue de la question.` }],
+        model: CARD_MODEL, max_tokens: MAX_TOKENS_CARD,
+        tools: [CARD_TOOL], tool_choice: { type: 'tool', name: CARD_TOOL.name },
+        messages: [{ role: 'user', content: `Question: ${n.q}\n\nAnswer: ${n.a.slice(0, CARD_INPUT_LENGTH)}\n\nFill in the card for this exchange, in the language of the question.` }],
       }),
     });
-    if (!r.ok) throw await erreurApi(r);
-    const f = (await r.json()).content?.find(b => b.type === 'tool_use')?.input;
-    if (!f) return;
-    if (f.mot_cle) n.kw = abreger(String(f.mot_cle), LONGUEUR_MOT_CLE_MAX);
-    n.ico = [...String(f.emoji || '')].slice(0, 4).join('');   // an emoji can span several characters
-    if (f.resume) n.sum = String(f.resume);
+    if (!r.ok) throw await apiError(r);
+    const c = (await r.json()).content?.find(b => b.type === 'tool_use')?.input;
+    if (!c) return;
+    if (c.keyword) n.kw = shorten(String(c.keyword), LLM_KEYWORD_LENGTH);
+    n.ico = [...String(c.emoji || '')].slice(0, 4).join('');   // an emoji can span several characters
+    if (c.summary) n.sum = String(c.summary);
   }
 
   // ---------- LLM settings (key kept on the device only) ----------
-  function chargerReglages() {
-    const defaut = { cle: '', modele: MODELES[0][0], espace: '', retenir: false };
-    try { return { ...defaut, ...JSON.parse(localStorage.getItem(CLE_REGLAGES)) }; } catch { return defaut; }
+  function loadSettings() {
+    const defaults = { key: '', model: MODELS[0][0], workspace: '', keep: false, language: '' };
+    return { ...defaults, ...readJson(SETTINGS_KEY) };
   }
-  function sauverReglages() {
-    const aStocker = { ...reglages, cle: reglages.retenir ? reglages.cle : '' };   // without "Garder", the key stays in memory only
-    try { localStorage.setItem(CLE_REGLAGES, JSON.stringify(aStocker)); } catch { /* ignored */ }
+  function saveSettings() {
+    writeJson(SETTINGS_KEY, { ...settings, key: settings.keep ? settings.key : '' });   // unticked: the key stays in memory only
   }
-  let reglages = chargerReglages();
-  if (!MODELES.some(([id]) => id === reglages.modele)) reglages.modele = MODELES[0][0];
-  for (const [id, libelle] of MODELES) {
-    const o = htmlEl('option', null, libelle);
+  const settings = loadSettings();
+  if (!MODELS.some(([id]) => id === settings.model)) settings.model = MODELS[0][0];
+  for (const [id] of MODELS) {
+    const o = htmlEl('option');
     o.value = id;
-    $('r-modele').append(o);
+    $('set-model').append(o);
   }
-  function libelleMode() {
-    const m = MODELES.find(([id]) => id === reglages.modele);
-    return reglages.cle ? `Claude ${m ? m[1].split(' (')[0] : ''}` : 'POC · démo sans LLM';
+  function modeLabel() {
+    const m = MODELS.find(([id]) => id === settings.model);
+    return settings.key ? `Claude ${m ? t(m[1]).split(' (')[0] : ''}` : t('modeDemo');
   }
-  function ouvrirReglages() {
-    fermerMenu();
-    $('r-cle').value = reglages.cle;
-    $('r-modele').value = reglages.modele;
-    $('r-espace').value = reglages.espace;
-    $('r-retenir').checked = reglages.retenir;
-    $('reglages').showModal();
+  function openSettings() {
+    closeMenu();
+    $('set-key').value = settings.key;
+    $('set-model').value = settings.model;
+    $('set-workspace').value = settings.workspace;
+    $('set-keep').checked = settings.keep;
+    $('set-language').value = settings.language;
+    $('settings').showModal();
   }
-  $('f-reglages').addEventListener('submit', e => {
+  function readSettingsForm() {
+    Object.assign(settings, {
+      key: $('set-key').value.trim(), model: $('set-model').value, workspace: $('set-workspace').value.trim(),
+      keep: $('set-keep').checked, language: $('set-language').value.trim(),
+    });
+    saveSettings();
+  }
+  $('settings-form').addEventListener('submit', e => {
     e.preventDefault();
-    reglages = {
-      cle: $('r-cle').value.trim(), modele: $('r-modele').value,
-      espace: $('r-espace').value.trim(), retenir: $('r-retenir').checked,
-    };
-    sauverReglages();
-    $('reglages').close();
-    $('sous-titre').textContent = libelleMode();
-    toast(reglages.cle ? 'Claude est branché' : 'Mode démo : réponses simulées');
+    readSettingsForm();
+    $('settings').close();
+    applyStaticTexts();
+    toast(settings.key ? t('claudeOn') : t('demoOn'));
+    changeLanguage(false);                      // translates only if this language is not on the device yet
   });
-  $('r-effacer').addEventListener('click', () => { $('r-cle').value = ''; });
-  $('r-fermer').addEventListener('click', () => $('reglages').close());
+  $('btn-retranslate').addEventListener('click', () => {
+    readSettingsForm();
+    $('settings').close();
+    changeLanguage(true);
+  });
+  $('btn-clear-key').addEventListener('click', () => { $('set-key').value = ''; });
+  $('btn-close').addEventListener('click', () => $('settings').close());
 
   // ---------- Top bar ----------
-  function fermerMenu() {
+  function closeMenu() {
     $('menu').hidden = true;
-    $('b-menu').setAttribute('aria-expanded', 'false');
+    $('btn-menu').setAttribute('aria-expanded', 'false');
   }
-  $('b-menu').addEventListener('click', () => {
-    const ouvrir = $('menu').hidden;
-    $('menu').hidden = !ouvrir;
-    $('b-menu').setAttribute('aria-expanded', String(ouvrir));
+  $('btn-menu').addEventListener('click', () => {
+    const open = $('menu').hidden;
+    $('menu').hidden = !open;
+    $('btn-menu').setAttribute('aria-expanded', String(open));
   });
   document.addEventListener('pointerdown', e => {
-    if (!$('menu').hidden && !e.target.closest('#menu, #b-menu')) fermerMenu();
+    if (!$('menu').hidden && !e.target.closest('#menu, #btn-menu')) closeMenu();
   });
-  $('b-reglages').addEventListener('click', ouvrirReglages);
-  $('b-selection').addEventListener('click', () => passerEnSelection(true));
-  $('b-annuler').addEventListener('click', () => passerEnSelection(false));
-  $('b-fusionner').addEventListener('click', fusionner);
-  $('b-cadrer').addEventListener('click', cadrer);
-  $('b-export').addEventListener('click', () => {
-    fermerMenu();
-    const json = JSON.stringify({ version: 2, noeuds, groupes }, null, 2);
+  $('btn-settings').addEventListener('click', openSettings);
+  $('btn-select').addEventListener('click', () => setSelectMode(true));
+  $('btn-cancel').addEventListener('click', () => setSelectMode(false));
+  $('btn-merge').addEventListener('click', merge);
+  $('btn-fit').addEventListener('click', fit);
+  $('btn-export').addEventListener('click', () => {
+    closeMenu();
+    const json = JSON.stringify({ version: 3, nodes, groups }, null, 2);
     navigator.clipboard?.writeText(json)
-      .then(() => toast('Arbre copié au format JSON'))
-      .catch(() => toast('Copie refusée par le navigateur'));
+      .then(() => toast(t('copied')))
+      .catch(() => toast(t('copyRefused')));
   });
-  let attenteReinit = null;
-  $('b-reinit').addEventListener('click', e => {
+  let resetPending = null;
+  $('btn-reset').addEventListener('click', e => {
     const b = e.currentTarget;
-    if (!attenteReinit) {               // first tap: ask for confirmation
-      b.textContent = 'Confirmer ?';
-      attenteReinit = setTimeout(() => { b.textContent = 'Réinitialiser'; attenteReinit = null; }, DELAI_CONFIRMATION);
+    if (!resetPending) {                       // first tap: ask for confirmation
+      b.textContent = t('confirmReset');
+      resetPending = setTimeout(() => { b.textContent = t('reset'); resetPending = null; }, CONFIRM_DELAY);
       return;
     }
-    clearTimeout(attenteReinit);
-    attenteReinit = null;
-    b.textContent = 'Réinitialiser';
-    fermerMenu();
-    noeuds = copie(EXEMPLE);
-    selection = SELECTION_INITIALE;
-    groupes = [];
-    sauver();
-    dessiner();
-    cadrer();
-    toast("Arbre d'exemple rétabli");
+    clearTimeout(resetPending);
+    resetPending = null;
+    b.textContent = t('reset');
+    closeMenu();
+    nodes = clone(EXAMPLE);
+    selection = INITIAL_SELECTION;
+    groups = [];
+    saveState();
+    draw();
+    fit();
+    toast(t('resetDone'));
   });
 
   // ---------- Startup ----------
-  $('sous-titre').textContent = libelleMode();
-  dessiner();
-  requestAnimationFrame(cadrer);
-  addEventListener('resize', () => centrerSur(selection));   // e.g. the keyboard opening
+  changeLanguage(false);                        // applies the saved language (translates it if needed)
+  requestAnimationFrame(fit);
+  addEventListener('resize', () => centerOn(selection));   // e.g. the keyboard opening
 
   // Offline mode (PWA): skipped where service workers are not allowed
   try {
