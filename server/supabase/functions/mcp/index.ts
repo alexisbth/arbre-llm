@@ -11,7 +11,8 @@
 //    security only lets the user reach their own trees. This function holds no secret key.
 //
 // Stateless: each request gets its own MCP server and transport (no session to keep between requests).
-// show_tree and add_exchange also draw the tree in the conversation (MCP Apps page, see view.ts).
+// show_tree and add_exchange also draw the tree: in Claude's side panel on a computer, full screen on a phone
+// (MCP Apps page, see view.ts).
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { McpServer } from 'npm:@modelcontextprotocol/sdk@1.32.2/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from 'npm:@modelcontextprotocol/sdk@1.32.2/server/webStandardStreamableHttp.js';
@@ -20,14 +21,14 @@ import { z } from 'npm:zod@4';
 import * as tree from './tree.ts';
 import { VIEW_HTML } from './view.ts';
 
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const PUBLIC_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;          // public key: only lets requests reach the API
 const RESOURCE = `${SUPABASE_URL}/functions/v1/mcp`;            // this connector's public address
 const METADATA_PATH = '/.well-known/oauth-protected-resource';
 const TEXT_LENGTH = 100_000;                                    // longest question or answer accepted
 const EMOJI_LENGTH = 8;
-const VIEW_URI = 'ui://ramifai/tree-v1.html';                   // the tree drawn in the conversation (view.ts)
+const VIEW_URI = 'ui://ramifai/tree-v2.html';                   // the tree drawn in the assistant (view.ts)
 const VIEW_MIME = 'text/html;profile=mcp-app';                  // MCP Apps page
 const view = { ui: { resourceUri: VIEW_URI } };                 // tools whose result is shown with the drawn tree
 
@@ -165,7 +166,8 @@ function buildServer(db: SupabaseClient): McpServer {
 
   server.registerResource('tree-view', VIEW_URI, { title: 'Ramifai tree', mimeType: VIEW_MIME,
     description: 'The tree drawn in the conversation' }, async () => ({
-    contents: [{ uri: VIEW_URI, mimeType: VIEW_MIME, text: VIEW_HTML, _meta: { ui: { prefersBorder: true } } }],
+    // preferredDisplayMode: Claude opens the drawing in its side panel, next to the chat, without a click
+    contents: [{ uri: VIEW_URI, mimeType: VIEW_MIME, text: VIEW_HTML, _meta: { ui: { prefersBorder: true, preferredDisplayMode: 'fullscreen' } } }],
   }));
   return server;
 }
