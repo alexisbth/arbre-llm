@@ -168,7 +168,12 @@ body.move-mode #topbar #btn-fit { display: inline-block }   /* to find the new p
 }
 #ask-form button { background: var(--ink); color: var(--bg); border-color: var(--ink); font-weight: 700 }
 #ask-form #btn-mic { min-width: 44px; padding: 0; font-size: 18px; background: var(--bg); color: var(--ink); border-color: var(--line) }
-#ask-form #btn-mic.on { background: var(--alert); color: #fff; border-color: var(--alert) }
+#ask-form #btn-mic.on { background: var(--alert); color: #fff; border-color: var(--alert); animation: recording 1.2s ease-out infinite }
+/* While recording: a ring keeps spreading out from the button, so it is clear the microphone is on */
+@keyframes recording {
+  from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--alert) 70%, transparent) }
+  to { box-shadow: 0 0 0 14px color-mix(in srgb, var(--alert) 0%, transparent) }
+}
 #btn-mic[hidden] { display: none }
 
 /* ---- Token gauges (bottom corner of the map) ---- */
@@ -265,4 +270,7 @@ button.primary { background: var(--ink); color: var(--bg); border-color: var(--i
   #topbar { right: 420px }
   #corner { position: fixed; inset-inline-end: auto; right: 436px; bottom: 16px; margin: 0 }
 }
-@media (prefers-reduced-motion: reduce) { #toast, #snack { transition: none } }
+@media (prefers-reduced-motion: reduce) {
+  #toast, #snack { transition: none }
+  #ask-form #btn-mic.on { animation: none; box-shadow: 0 0 0 4px color-mix(in srgb, var(--alert) 40%, transparent) }   /* still shown, without motion */
+}
