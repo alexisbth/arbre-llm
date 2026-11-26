@@ -65,6 +65,7 @@
   <button id="where" type="button"></button>
   <form id="ask-form">
     <textarea id="question" rows="1" dir="auto" data-i18n-aria="questionLabel" aria-label="New question"></textarea>
+    <button id="btn-mic" type="button" aria-label="Dictate">🎤</button>
     <button type="submit" data-i18n="send">Send</button>
   </form>
 </section>
@@ -105,6 +106,16 @@
       <option value="日本語"><option value="한국어"><option value="Türkçe"><option value="Polski">
     </datalist>
     <p class="note" data-i18n="languageNote">Translated by the AI the first time (an API key is needed), then kept on this device.</p>
+    <details id="advanced">
+      <summary data-i18n="advanced">Advanced</summary>
+      <label><span data-i18n="voice">Voice input</span>
+        <select id="set-voice"></select>
+      </label>
+      <label id="voice-model-field"><span data-i18n="voiceModel">Voice model (optional)</span>
+        <input id="set-voice-model" type="text" autocomplete="off" spellcheck="false">
+      </label>
+      <p class="note" data-i18n="voiceNote"></p>
+    </details>
     <div class="actions">
       <button id="btn-retranslate" type="button" data-i18n="retranslate">Retranslate</button>
       <button id="btn-clear-key" type="button" data-i18n="clearKey">Clear key</button>

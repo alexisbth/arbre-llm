@@ -104,6 +104,13 @@ body.move-mode #topbar #btn-fit { display: inline-block }   /* to find the new p
   content: ""; position: absolute; top: 7px; left: 50%; width: 40px; height: 4px;
   margin-left: -20px; border-radius: 2px; background: var(--line);
 }
+/* Arrow at the end of the handle: down when the panel is open (swipe or tap to close), up when it is closed */
+#handle { padding-inline-end: 40px; touch-action: none }
+#handle::after {
+  content: ""; position: absolute; top: 22px; inset-inline-end: 12px; width: 12px; height: 12px;
+  border-right: 3px solid var(--ink); border-bottom: 3px solid var(--ink); transform: rotate(45deg);
+}
+.collapsed #handle::after { top: 28px; transform: rotate(-135deg) }
 #panel-title { display: block; font-size: 18px; font-weight: 800; line-height: 1.2 }
 #panel-summary { display: block; font-size: 14px; color: var(--slate); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 #panel:not(.collapsed) #panel-summary { white-space: normal }
@@ -160,6 +167,9 @@ body.move-mode #topbar #btn-fit { display: inline-block }   /* to find the new p
   border: 1px solid var(--line); border-radius: 14px; background: var(--card);
 }
 #ask-form button { background: var(--ink); color: var(--bg); border-color: var(--ink); font-weight: 700 }
+#ask-form #btn-mic { min-width: 44px; padding: 0; font-size: 18px; background: var(--bg); color: var(--ink); border-color: var(--line) }
+#ask-form #btn-mic.on { background: var(--alert); color: #fff; border-color: var(--alert) }
+#btn-mic[hidden] { display: none }
 
 /* ---- Token gauges (bottom corner of the map) ---- */
 #corner {
@@ -203,6 +213,8 @@ dialog h2 { margin: 0 0 4px; font-size: 20px }
 }
 #btn-sign-in { display: flex; border: 0 }   /* on its own line, above the key field */
 #btn-sign-in[hidden] { display: none }
+#advanced { margin-top: 16px; border-top: 1px solid var(--line) }
+#advanced summary { display: flex; align-items: center; min-height: 44px; font-weight: 700; cursor: pointer }
 #settings-form label.check { display: flex; align-items: center; gap: 10px; font-weight: 500 }
 #settings-form input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--ink) }
 .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 16px }
@@ -247,7 +259,7 @@ button.primary { background: var(--ink); color: var(--bg); border-color: var(--i
     inset: 0 0 0 auto; width: 420px; max-height: none; padding-top: 70px;
     border-top: 0; border-left: 1px solid var(--line); border-radius: 0; box-shadow: none;
   }
-  #handle::before { display: none }
+  #handle::before, #handle::after { display: none }
   .collapsed #panel-body { display: block }
   #panel #panel-summary { white-space: normal }
   #topbar { right: 420px }
