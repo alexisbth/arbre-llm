@@ -1,6 +1,6 @@
 // Service worker: keeps a copy of the app's files so that it opens offline.
 // "Network first" strategy: the online version is always used when it can be reached.
-const VERSION = 'arbre-llm-v4';
+const VERSION = 'ramifai-v5';
 const FICHIERS = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {

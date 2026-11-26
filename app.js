@@ -1,4 +1,4 @@
-/* arbre-llm — proof of concept (POC), v4
+/* Ramifai — proof of concept (POC), v5
  *
  * Overall approach
  * 1. Data: a flat list of nodes { id, parent, q, a, kw, sum, ico }.
@@ -10,9 +10,10 @@
  * 4. Drawing: an SVG rebuilt on every change, with an arrow at the end of each link.
  * 5. Gestures: drag = pan, pinch or wheel = zoom, tap = select (or expand a group).
  * 6. Panel: conversation thread, compact context sent to the LLM, token gauges.
- * 7. LLM: with an Anthropic API key (kept on the device), the question is sent to Claude with the
- *    compact context; the answer streams in, then a small model fills in the node's card
- *    (keyword, emoji, summary). Without a key: simulated answers (demo mode).
+ * 7. LLM: the user picks a provider (Claude, Gemini, Groq, OpenRouter or ChatGPT; three have a free
+ *    tier) and pastes its key, kept on the device. The question is sent with the compact context;
+ *    the answer streams in, then the LLM fills in the node's card (keyword, emoji, summary).
+ *    Without a key: simulated answers (demo mode).
  * 8. Interface language: the English texts (UI) are translated by the LLM into the chosen
  *    language, checked, then kept on the device. Right-to-left languages mirror the layout.
  * Security: all text is inserted with textContent (never innerHTML), no third-party script.
@@ -41,15 +42,41 @@
   const ROOT = 'root';
   const INITIAL_SELECTION = 'n3';
 
-  // ---------- LLM: Claude through the Anthropic API ----------
-  const API_URL = 'https://api.anthropic.com/v1/messages';
-  const API_VERSION = '2026-10-21';
-  const MODELS = [                     // [id, key of its label in UI]; the first one is the default model
-    ['claude-sonnet-5-5', 'modelSonnet'],
-    ['claude-haiku-5-5', 'modelHaiku'],
-    ['claude-opus-5-5', 'modelOpus'],
-  ];
-  const CARD_MODEL = 'claude-haiku-5-5';     // small model for the node card and the interface translation
+  // ---------- LLM providers ----------
+  // format: how requests are written. 'anthropic' = Claude's Messages API; 'openai' = Chat Completions,
+  //   also used by Groq and OpenRouter; 'gemini' = Google's own API.
+  // models: suggestions, the first one is the default. With a key, the app asks the provider for its
+  //   model list: keep / skip filter that list (to drop models that cannot chat), pinned stays at its top,
+  //   prefer picks the default in it when the current model is not offered (models get renamed often).
+  // label / note: keys of texts in UI. cardModel: smaller model for the node card and the translation.
+  const PROVIDERS = {
+    anthropic: { name: 'Claude', format: 'anthropic', base: 'https://api.anthropic.com/v1', placeholder: 'sk-ant-…',
+      label: 'providerAnthropic', note: 'noteAnthropic',
+      models: ['claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-opus-5-5'],
+      modelLabels: { 'claude-sonnet-5-5': 'modelSonnet', 'claude-haiku-5-5': 'modelHaiku', 'claude-opus-5-5': 'modelOpus' },
+      cardModel: 'claude-haiku-5-5' },
+    gemini: { name: 'Gemini', format: 'gemini', base: 'https://generativelanguage.googleapis.com/v1beta', placeholder: 'AIza…',
+      label: 'providerGemini', note: 'noteGemini', list: true,
+      models: ['gemini-flash-latest', 'gemini-flash-lite-latest'],
+      keep: /^gemini/, skip: /tts|image|live|audio|embed|transcribe|translate|omni|robotics|computer|research/,
+      prefer: [/^gemini-flash-latest$/, /^gemini-[\d.]+-flash$/] },
+    groq: { name: 'Groq', format: 'openai', base: 'https://api.groq.com/openai/v1', placeholder: 'gsk_…',
+      label: 'providerGroq', note: 'noteGroq', list: true,
+      models: ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile'],
+      skip: /whisper|tts|guard|orpheus|playai|compound/, prefer: [/gpt-oss-120b/, /llama-3\.3-70b/] },
+    openrouter: { name: 'OpenRouter', format: 'openai', base: 'https://openrouter.ai/api/v1', placeholder: 'sk-or-…',
+      label: 'providerOpenrouter', note: 'noteOpenrouter', list: true,
+      models: ['openrouter/free'], pinned: ['openrouter/free'], keep: /:free$/ },
+    openai: { name: 'ChatGPT', format: 'openai', base: 'https://api.openai.com/v1', placeholder: 'sk-…',
+      label: 'providerOpenai', note: 'noteOpenai', list: true,
+      models: ['gpt-5-mini'], keep: /^(gpt|o\d)/,
+      skip: /audio|realtime|tts|transcribe|image|embed|search|moderation|codex|instruct|\d{4}-\d\d-\d\d/,
+      prefer: [/^gpt-[\d.]+-mini$/, /^gpt-[\d.]+$/] },
+  };
+  const DEFAULT_PROVIDER = 'anthropic';
+  const API_VERSION = '2026-10-21';    // Anthropic API version
+  const MODEL_PAGE = 1000;             // models asked from Gemini's list in one call
+  const JSON_INSTRUCTION = 'Answer with a single JSON object that follows this JSON Schema, and nothing else:\n';
   const MAX_TOKENS_ANSWER = 4096;
   const MAX_TOKENS_CARD = 300;
   const MAX_TOKENS_TRANSLATION = 6000;
@@ -69,10 +96,20 @@
     gaugesLabel: "Tokens used. Tap to change the model's context size.", gaugePath: 'Path', gaugeTree: 'Tree',
     tabThread: 'Thread', tabContext: 'LLM context', questionLabel: 'New question', send: 'Send',
     settingsTitle: 'Settings', settingsDemoNote: 'Without a key, the app stays in demo mode (simulated answers).',
-    apiKey: 'Anthropic API key', model: 'Model', workspace: 'Workspace ID (only if the API asks for it)',
+    provider: 'AI provider', apiKey: 'API key', model: 'Model', workspace: 'Workspace ID (only if the API asks for it)',
     keepKey: 'Keep the key on this device',
-    keyNote: 'The key stays on this device and is only sent to api.anthropic.com. Create it in the Claude Console ' +
-      '(platform.claude.com) and set a spending limit there. If the box above is unticked, the key is forgotten when the app closes.',
+    keyNote: 'The key stays on this device and is only sent to {host}. If the box above is unticked, ' +
+      'the key is forgotten when the app closes.',
+    providerAnthropic: 'Claude (Anthropic) · paid', providerGemini: 'Gemini (Google) · free tier',
+    providerGroq: 'Groq (open models) · free tier', providerOpenrouter: 'OpenRouter · free models',
+    providerOpenai: 'ChatGPT (OpenAI) · paid',
+    noteAnthropic: 'Paid: buy credits in the Claude Console (platform.claude.com), create the key there and set a spending limit.',
+    noteGemini: 'Free tier: create the key at aistudio.google.com. On the free tier, Google may use your conversations ' +
+      'to improve its products.',
+    noteGroq: 'Free tier, no card needed: create the key at console.groq.com. Beyond the free limits, requests are refused, not billed.',
+    noteOpenrouter: 'Free models: create the key at openrouter.ai. The model openrouter/free picks a free model for you. ' +
+      'About 50 free requests a day; each question uses 2.',
+    noteOpenai: 'Paid: buy credits at platform.openai.com and create the key there. ChatGPT Pro and Business include monthly API credits.',
     language: 'Interface language',
     languageNote: 'Translated by the AI the first time (an API key is needed), then kept on this device.',
     retranslate: 'Retranslate', clearKey: 'Clear key', close: 'Close', save: 'Save',
@@ -80,7 +117,7 @@
     modeDemo: 'POC · demo without LLM', selectHint: 'Tap the boxes to merge', rootLabel: 'Start',
     pickTwo: 'Pick at least two boxes.', merged: '{count} boxes merged. Tap the box to expand it.', expanded: 'Box expanded',
     rootSummary: 'Ask a first question to start a new branch.', placeholder: 'After “{keyword}”…',
-    noExchange: 'No exchange on this path yet.', retry: 'Retry', followUps: 'Follow-ups already explored from here:',
+    noExchange: 'No exchange on this path yet.', retry: 'Retry',
     answering: 'Answer in progress…', nothingToSend: 'Nothing to send: a question asked here goes without context.',
     tokensApprox: '≈ {count} tokens',
     contextStat: 'sent to the LLM for a question asked here, versus ≈ {full} tokens for the whole path in full (exchanges: {count}).',
@@ -91,9 +128,12 @@
     restartQuestion: 'Restart of “{keyword}” in a new conversation',
     restartSummary: 'New conversation starting from the summary of “{keyword}”.',
     restartDone: 'New conversation created from the summary',
-    demoAnswer: 'Demo mode: simulated answer to “{question}”.\nFor real answers, add your Anthropic API key in ⋯ → Settings.',
+    demoAnswer: 'Demo mode: simulated answer to “{question}”.\nFor real answers, choose an AI provider in ⋯ → Settings ' +
+      'and paste its key (some are free).',
     questionSummary: 'Question: {question}', interrupted: 'Answer interrupted.', llmError: 'The LLM returned an error',
-    apiKeyRejected: 'API key rejected: check it in the settings', claudeOn: 'Claude is connected',
+    emptyAnswer: 'The model returned an empty answer.',
+    apiKeyRejected: 'API key rejected: check it in the settings',
+    quotaReached: 'quota reached: wait a little or switch provider in the settings', connected: '{provider} is connected',
     demoOn: 'Demo mode: simulated answers', copied: 'Tree copied as JSON', copyRefused: 'Copy refused by the browser',
     resetDone: 'Example tree restored', translating: 'Translating the interface…', translated: 'Interface translated',
     translationNeedsKey: 'Translation needs an API key: the interface stays in English.',
@@ -191,7 +231,7 @@
   function applyStaticTexts() {
     document.querySelectorAll('[data-i18n]').forEach(e => { e.textContent = t(e.dataset.i18n); });
     document.querySelectorAll('[data-i18n-aria]').forEach(e => e.setAttribute('aria-label', t(e.dataset.i18nAria)));
-    MODELS.forEach(([, labelKey], i) => { $('set-model').options[i].textContent = t(labelKey); });
+    for (const o of $('set-provider').options) o.textContent = t(PROVIDERS[o.value].label);
     $('subtitle').textContent = modeSelect ? t('selectHint') : modeLabel();
     $('btn-merge').textContent = t('merge', { count: completeGroup().size });
   }
@@ -205,7 +245,7 @@
     draw();
     return usable;
   }
-  // One call to the small model, forced to answer with a fixed format; each text is checked
+  // One call to the LLM, asked to answer with a fixed format; each text is checked
   async function translateInterface(language) {
     const keys = Object.keys(UI);
     const tool = {
@@ -223,19 +263,11 @@
     };
     const prompt = `Translate these user-interface texts of a mobile app into this language: ${language}.\n` +
       'Keep them short, natural and consistent with each other. Keep every placeholder in curly braces exactly as is ' +
-      '(for example {count}), keep the line breaks, and keep product and technical names unchanged ' +
-      '(Claude, Anthropic, Claude Console, api.anthropic.com, Sonnet, Haiku, Opus, JSON, LLM, API, POC).\n\n' +
+      '(for example {count}), keep the line breaks, and keep product names, technical names and web addresses unchanged ' +
+      '(Ramifai, Claude, Anthropic, Claude Console, Sonnet, Haiku, Opus, Gemini, Google, Groq, OpenRouter, ChatGPT, OpenAI, ' +
+      'openrouter/free, platform.claude.com, JSON, LLM, API, POC).\n\n' +
       JSON.stringify(UI, null, 1);
-    const r = await fetch(API_URL, {
-      method: 'POST', headers: apiHeaders(),
-      body: JSON.stringify({
-        model: CARD_MODEL, max_tokens: MAX_TOKENS_TRANSLATION,
-        tools: [tool], tool_choice: { type: 'tool', name: tool.name },
-        messages: [{ role: 'user', content: prompt }],
-      }),
-    });
-    if (!r.ok) throw await apiError(r);
-    const out = (await r.json()).content?.find(b => b.type === 'tool_use')?.input;
+    const out = await structured(tool, prompt, MAX_TOKENS_TRANSLATION);
     if (!out || typeof out.texts !== 'object' || !out.texts) throw new Error('empty translation');
     const checked = {};
     for (const k of keys) {                     // a text that lost or gained a {value} falls back to English
@@ -253,7 +285,7 @@
   async function changeLanguage(force) {
     if (applyLanguage() && !force) return;      // already translated on this device
     if (isEnglish(settings.language)) return;
-    if (!settings.key) { toast(t('translationNeedsKey')); return; }
+    if (!apiKey()) { toast(t('translationNeedsKey')); return; }
     toast(t('translating'));
     try {
       await translateInterface(settings.language);
@@ -560,16 +592,18 @@
       }
       thread.append(block);
     });
+    // Follow-ups already explored from here: one arrow fanning out to each of them, above its button
     const next = children(selection);
     if (next.length) {
       const d = htmlEl('div', 'follow-ups');
-      d.append(htmlEl('p', null, t('followUps')));
-      for (const c of next) {
+      next.forEach((c, i) => {
+        const item = htmlEl('div', 'follow-up');
+        item.dataset.id = c.id;                // the arrow and the button both open this follow-up
         const b = htmlEl('button', null, label(c));
         b.type = 'button';
-        b.dataset.id = c.id;
-        d.append(b);
-      }
+        item.append(htmlEl('span', 'fan', fanArrow(i, next.length)), b);
+        d.append(item);
+      });
       thread.append(d);
     }
     requestAnimationFrame(() => thread.querySelector('.current')?.scrollIntoView({ block: 'nearest' }));
@@ -577,6 +611,8 @@
     fillGauges(p);
   }
 
+  // Left-most follow-up: ↙, right-most: ↘, the others: ↓ (mirrored by the style sheet in right-to-left languages)
+  const fanArrow = (i, count) => (count === 1 || (i > 0 && i < count - 1) ? '↓' : i === 0 ? '↙' : '↘');
   const answerText = n => n.a || (n.pending ? t('answering') : '');
   const tokens = chars => Math.ceil(chars / CHARS_PER_TOKEN);
   const sum = (list, f) => list.reduce((s, n) => s + f(n), 0);
@@ -716,12 +752,12 @@
     select(n.id, true);
   });
 
-  // ---------- Answer: Claude if a key is set, otherwise a simulated answer ----------
+  // ---------- Answer: the chosen LLM if a key is set, otherwise a simulated answer ----------
   async function answer(n) {
     Object.assign(n, { pending: true, error: false, a: '' });
     delete n.usage;
     if (selection === n.id) fillPanel();
-    if (!settings.key) {
+    if (!apiKey()) {
       setTimeout(() => {
         Object.assign(n, { pending: false, a: t('demoAnswer', { question: n.q }) });
         saveState();
@@ -730,7 +766,7 @@
       return;
     }
     try {
-      await askClaude(n);
+      await askLLM(n);
       n.pending = false;
       saveState();
       if (selection === n.id) fillPanel();
@@ -743,21 +779,72 @@
     draw();
   }
 
-  function apiHeaders() {
-    const h = {
-      'content-type': 'application/json',
-      'x-api-key': settings.key,
-      'anthropic-version': API_VERSION,
-      'anthropic-dangerous-direct-browser-access': 'true',   // allows calling the API directly from a browser
-    };
-    if (settings.workspace) h['anthropic-workspace-id'] = settings.workspace;
+  // ---------- LLM calls ----------
+  const provider = () => PROVIDERS[settings.provider];
+  const apiKey = () => settings.keys[settings.provider] || '';
+  const currentModel = () => settings.models[settings.provider] || provider().models[0];
+  const lightModel = () => provider().cardModel || currentModel();
+  const cleanText = s => s.replace(/<think>[\s\S]*?<\/think>/g, '').trim();   // some open models show their reasoning
+
+  function headers(p = provider(), key = apiKey()) {
+    const h = { 'content-type': 'application/json' };
+    if (p.format === 'anthropic') {
+      Object.assign(h, {
+        'x-api-key': key,
+        'anthropic-version': API_VERSION,
+        'anthropic-dangerous-direct-browser-access': 'true',   // allows calling the API directly from a browser
+      });
+      if (settings.workspace) h['anthropic-workspace-id'] = settings.workspace;
+    } else if (p.format === 'gemini') h['x-goog-api-key'] = key;
+    else h.authorization = 'Bearer ' + key;
     return h;
   }
   async function apiError(r) {
     let msg = `Error ${r.status}`;
-    try { const j = await r.json(); if (j.error?.message) msg += ': ' + j.error.message; } catch { /* unreadable body */ }
-    if (r.status === 401) msg += ` (${t('apiKeyRejected')})`;
+    try {
+      const j = await r.json();
+      const e = (Array.isArray(j) ? j[0] : j)?.error;          // Gemini may wrap its error in a list
+      if (e?.message) msg += ': ' + e.message;
+    } catch { /* unreadable body */ }
+    if (r.status === 401 || r.status === 403) msg += ` (${t('apiKeyRejected')})`;
+    if (r.status === 429) msg += ` (${t('quotaReached')})`;
     return new Error(msg);
+  }
+
+  // Address and body of a request, in the chosen provider's format.
+  // messages: [{ role: 'user' | 'assistant', content }]
+  function request(model, system, messages, { stream = false, maxTokens = MAX_TOKENS_ANSWER, json = false } = {}) {
+    const p = provider();
+    if (p.format === 'anthropic') return { url: `${p.base}/messages`, body: { model, max_tokens: maxTokens, stream, system, messages } };
+    if (p.format === 'gemini') {
+      const action = stream ? 'streamGenerateContent?alt=sse' : 'generateContent';
+      return {
+        url: `${p.base}/models/${encodeURIComponent(model.replace(/^models\//, ''))}:${action}`,
+        body: {
+          systemInstruction: { parts: [{ text: system }] },
+          contents: messages.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })),
+          ...(json ? { generationConfig: { responseMimeType: 'application/json' } } : {}),
+        },
+      };
+    }
+    return { url: `${p.base}/chat/completions`, body: { model, stream, messages: [{ role: 'system', content: system }, ...messages] } };
+  }
+
+  // Text and token counts found in a response, or in one piece of a streamed response
+  function readPiece(d) {
+    if (d.error) throw new Error(d.error.message || String(d.error));
+    const f = provider().format;
+    if (f === 'anthropic') return {
+      text: d.type === 'content_block_delta' && d.delta.type === 'text_delta' ? d.delta.text : '',
+      input: d.type === 'message_start' ? d.message.usage.input_tokens : undefined,
+      output: d.type === 'message_delta' ? d.usage?.output_tokens : undefined,
+    };
+    if (f === 'gemini') return {
+      text: (d.candidates?.[0]?.content?.parts || []).filter(x => !x.thought).map(x => x.text || '').join(''),
+      input: d.usageMetadata?.promptTokenCount, output: d.usageMetadata?.candidatesTokenCount,
+    };
+    const choice = d.choices?.[0], u = d.usage || d.x_groq?.usage;
+    return { text: choice?.delta?.content || choice?.message?.content || '', input: u?.prompt_tokens, output: u?.completion_tokens };
   }
 
   // Request: instruction + summary of earlier steps, then the last exchanges in full, then the question
@@ -773,32 +860,32 @@
     return { system, messages };
   }
 
-  // Streaming call: the answer is displayed as it arrives
-  async function askClaude(n) {
-    const r = await fetch(API_URL, {
-      method: 'POST', headers: apiHeaders(),
-      body: JSON.stringify({ model: settings.model, max_tokens: MAX_TOKENS_ANSWER, stream: true, ...buildRequest(n) }),
-    });
+  // Streaming call: the answer is displayed as it arrives. All three formats send "data: {…}" lines.
+  async function askLLM(n) {
+    const { system, messages } = buildRequest(n);
+    const { url, body } = request(currentModel(), system, messages, { stream: true });
+    const r = await fetch(url, { method: 'POST', headers: headers(), body: JSON.stringify(body) });
     if (!r.ok) throw await apiError(r);
     const reader = r.body.getReader(), decoder = new TextDecoder();
     let buffer = '';
-    n.usage = { input: 0, output: 0 };
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      buffer += decoder.decode(value, { stream: true }).replace(/\r/g, '');
-      const events = buffer.split('\n\n');
-      buffer = events.pop();                   // last chunk, possibly incomplete
-      for (const ev of events) {
-        const line = ev.split('\n').find(l => l.startsWith('data:'));
-        if (!line) continue;
-        const d = JSON.parse(line.slice(5));
-        if (d.type === 'message_start') n.usage.input = d.message.usage.input_tokens;
-        else if (d.type === 'content_block_delta' && d.delta.type === 'text_delta') { n.a += d.delta.text; showStream(n); }
-        else if (d.type === 'message_delta' && d.usage) n.usage.output = d.usage.output_tokens;
-        else if (d.type === 'error') throw new Error(d.error.message);
-      }                                        // other events (ping…) are ignored
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop();                    // last line, possibly incomplete
+      for (const line of lines) {
+        const data = line.startsWith('data:') ? line.slice(5).trim() : '';
+        if (!data || data === '[DONE]') continue;   // other lines (event names, comments) are ignored
+        const piece = readPiece(JSON.parse(data));
+        if (piece.text) { n.a += piece.text; showStream(n); }
+        if (piece.input != null || piece.output != null) {
+          n.usage = { input: piece.input ?? n.usage?.input ?? 0, output: piece.output ?? n.usage?.output ?? 0 };
+        }
+      }
     }
+    n.a = cleanText(n.a);
+    if (!n.a) throw new Error(t('emptyAnswer'));
   }
   function showStream(n) {                     // updates only the answer text
     if (selection !== n.id) return;
@@ -806,7 +893,32 @@
     if (p) p.textContent = n.a;
   }
 
-  // Node card: the small model is forced to answer through a "tool" with a fixed format
+  // Structured answer following a "tool" schema. Claude is forced to fill in the tool; the other
+  // providers are asked for a JSON object following the same schema, read from their text.
+  async function structured(tool, prompt, maxTokens) {
+    const p = provider();
+    if (p.format === 'anthropic') {
+      const r = await fetch(`${p.base}/messages`, {
+        method: 'POST', headers: headers(),
+        body: JSON.stringify({
+          model: lightModel(), max_tokens: maxTokens,
+          tools: [tool], tool_choice: { type: 'tool', name: tool.name },
+          messages: [{ role: 'user', content: prompt }],
+        }),
+      });
+      if (!r.ok) throw await apiError(r);
+      return (await r.json()).content?.find(b => b.type === 'tool_use')?.input;
+    }
+    const system = JSON_INSTRUCTION + JSON.stringify(tool.input_schema);
+    const { url, body } = request(lightModel(), system, [{ role: 'user', content: prompt }], { json: true });
+    const r = await fetch(url, { method: 'POST', headers: headers(), body: JSON.stringify(body) });
+    if (!r.ok) throw await apiError(r);
+    const text = cleanText(readPiece(await r.json()).text);
+    const i = text.indexOf('{'), j = text.lastIndexOf('}');   // ignores any text around the object
+    return i < 0 || j < i ? null : JSON.parse(text.slice(i, j + 1));
+  }
+
+  // Node card: keyword, emoji and summary of an exchange
   const CARD_TOOL = {
     name: 'card',
     description: 'Summary card of a question-answer exchange',
@@ -821,63 +933,128 @@
     },
   };
   async function fillCard(n) {
-    const r = await fetch(API_URL, {
-      method: 'POST', headers: apiHeaders(),
-      body: JSON.stringify({
-        model: CARD_MODEL, max_tokens: MAX_TOKENS_CARD,
-        tools: [CARD_TOOL], tool_choice: { type: 'tool', name: CARD_TOOL.name },
-        messages: [{ role: 'user', content: `Question: ${n.q}\n\nAnswer: ${n.a.slice(0, CARD_INPUT_LENGTH)}\n\nFill in the card for this exchange, in the language of the question.` }],
-      }),
-    });
-    if (!r.ok) throw await apiError(r);
-    const c = (await r.json()).content?.find(b => b.type === 'tool_use')?.input;
+    const prompt = `Question: ${n.q}\n\nAnswer: ${n.a.slice(0, CARD_INPUT_LENGTH)}\n\n` +
+      'Fill in the card for this exchange, in the language of the question.';
+    const c = await structured(CARD_TOOL, prompt, MAX_TOKENS_CARD);
     if (!c) return;
     if (c.keyword) n.kw = shorten(String(c.keyword), LLM_KEYWORD_LENGTH);
     n.ico = [...String(c.emoji || '')].slice(0, 4).join('');   // an emoji can span several characters
     if (c.summary) n.sum = String(c.summary);
   }
 
-  // ---------- LLM settings (key kept on the device only) ----------
+  // ---------- LLM settings (keys kept on the device only) ----------
   function loadSettings() {
-    const defaults = { key: '', model: MODELS[0][0], workspace: '', keep: false, language: '' };
-    return { ...defaults, ...readJson(SETTINGS_KEY) };
+    const s = readJson(SETTINGS_KEY) || {};
+    const out = { provider: DEFAULT_PROVIDER, keys: {}, models: {}, workspace: '', keep: false, language: '', ...s };
+    if (s.key) out.keys.anthropic = s.key;      // settings saved by v4, when Claude was the only provider
+    if (s.model) out.models.anthropic = s.model;
+    delete out.key;
+    delete out.model;
+    if (!PROVIDERS[out.provider]) out.provider = DEFAULT_PROVIDER;
+    return out;
   }
   function saveSettings() {
-    writeJson(SETTINGS_KEY, { ...settings, key: settings.keep ? settings.key : '' });   // unticked: the key stays in memory only
+    writeJson(SETTINGS_KEY, { ...settings, keys: settings.keep ? settings.keys : {} });   // unticked: the keys stay in memory only
   }
   const settings = loadSettings();
-  if (!MODELS.some(([id]) => id === settings.model)) settings.model = MODELS[0][0];
-  for (const [id] of MODELS) {
+  for (const id in PROVIDERS) {
     const o = htmlEl('option');
     o.value = id;
-    $('set-model').append(o);
+    $('set-provider').append(o);
   }
   function modeLabel() {
-    const m = MODELS.find(([id]) => id === settings.model);
-    return settings.key ? `Claude ${m ? t(m[1]).split(' (')[0] : ''}` : t('modeDemo');
+    if (!apiKey()) return t('modeDemo');
+    const p = provider(), m = currentModel(), labelKey = p.modelLabels?.[m];
+    return labelKey ? `${p.name} ${t(labelKey).split(' (')[0]}` : `${p.name} · ${m.split('/').pop()}`;
   }
+
+  // The dialog shows one provider at a time; what is typed for each one is kept in a draft until "Save"
+  let draft, shown;
   function openSettings() {
     closeMenu();
-    $('set-key').value = settings.key;
-    $('set-model').value = settings.model;
+    draft = { keys: { ...settings.keys }, models: { ...settings.models } };
+    shown = settings.provider;
+    $('set-provider').value = shown;
+    showProvider();
     $('set-workspace').value = settings.workspace;
     $('set-keep').checked = settings.keep;
     $('set-language').value = settings.language;
     $('settings').showModal();
   }
+  function showProvider() {
+    const p = PROVIDERS[shown];
+    $('set-key').value = draft.keys[shown] || '';
+    $('set-key').placeholder = p.placeholder;
+    $('set-model').value = draft.models[shown] || p.models[0];
+    $('provider-note').textContent = t(p.note);
+    $('key-note').textContent = t('keyNote', { host: new URL(p.base).host });
+    $('workspace-field').hidden = p.format !== 'anthropic';
+    fillModelList(p, p.models);
+    loadModels(shown);
+  }
+  function keepDraft() {
+    draft.keys[shown] = $('set-key').value.trim();
+    draft.models[shown] = $('set-model').value.trim();
+  }
+  function fillModelList(p, ids) {             // suggestions shown under the "Model" field
+    const list = $('model-list');
+    list.textContent = '';
+    for (const id of ids) {
+      const o = htmlEl('option');
+      o.value = id;
+      if (p.modelLabels?.[id]) o.label = t(p.modelLabels[id]);
+      list.append(o);
+    }
+  }
+  // Asks the provider which models this key can use, and picks one if the current model is not offered
+  async function loadModels(id) {
+    const p = PROVIDERS[id], key = draft.keys[id];
+    if (!p.list || !key) return;
+    let ids;
+    try { ids = await listModels(p, key); } catch { return; }   // suggestions stay as they are
+    if (shown !== id || !ids.length) return;     // nothing usable, or another provider is shown now
+    fillModelList(p, ids);
+    const current = $('set-model').value.trim();
+    if (ids.includes(current) || (current && !p.models.includes(current))) return;   // keeps a model typed by the user
+    const pick = (p.prefer || []).map(re => ids.find(m => re.test(m))).find(Boolean) || ids[0];
+    $('set-model').value = draft.models[id] = pick;
+    if (!$('settings').open) { saveSettings(); applyStaticTexts(); }   // the dialog was saved before the list arrived
+  }
+  async function listModels(p, key) {
+    const url = p.format === 'gemini' ? `${p.base}/models?pageSize=${MODEL_PAGE}` : `${p.base}/models`;
+    const h = headers(p, key);
+    delete h['content-type'];
+    const r = await fetch(url, { headers: h });
+    if (!r.ok) return [];
+    const j = await r.json();
+    const list = p.format === 'gemini'
+      ? (j.models || []).filter(m => m.supportedGenerationMethods?.includes('generateContent'))
+        .map(m => ({ id: m.name.replace(/^models\//, ''), created: 0 }))
+      : (j.data || []).map(m => ({ id: m.id, created: m.created || 0 }));
+    const ids = list.sort((a, b) => b.created - a.created || b.id.localeCompare(a.id, 'en', { numeric: true }))   // newest first
+      .map(m => m.id).filter(m => (!p.keep || p.keep.test(m)) && !(p.skip && p.skip.test(m)));
+    return [...new Set([...(p.pinned || []), ...ids])];
+  }
   function readSettingsForm() {
+    keepDraft();
     Object.assign(settings, {
-      key: $('set-key').value.trim(), model: $('set-model').value, workspace: $('set-workspace').value.trim(),
+      provider: shown, keys: draft.keys, models: draft.models, workspace: $('set-workspace').value.trim(),
       keep: $('set-keep').checked, language: $('set-language').value.trim(),
     });
     saveSettings();
   }
+  $('set-provider').addEventListener('change', () => {
+    keepDraft();
+    shown = $('set-provider').value;
+    showProvider();
+  });
+  $('set-key').addEventListener('change', () => { keepDraft(); loadModels(shown); });
   $('settings-form').addEventListener('submit', e => {
     e.preventDefault();
     readSettingsForm();
     $('settings').close();
     applyStaticTexts();
-    toast(settings.key ? t('claudeOn') : t('demoOn'));
+    toast(apiKey() ? t('connected', { provider: provider().name }) : t('demoOn'));
     changeLanguage(false);                      // translates only if this language is not on the device yet
   });
   $('btn-retranslate').addEventListener('click', () => {

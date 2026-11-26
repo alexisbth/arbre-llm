@@ -122,11 +122,14 @@ body.select-mode #topbar .in-select { display: inline-block }
 .exchange .a { margin: 0; white-space: pre-wrap }
 .exchange.error .a { color: var(--error) }
 /* User content keeps its own direction (e.g. English text inside an Arabic interface) */
-.exchange .kw, .exchange .q, .exchange .a, #panel-title, #panel-summary, #context li, .follow-ups button { unicode-bidi: plaintext }
-.thread-arrow { margin: -6px 0 4px; margin-inline-start: 16px; font-size: 18px; line-height: 1; color: var(--slate) }
-.follow-ups { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0 8px }
-.follow-ups p { width: 100%; margin: 0; font-size: 13px; color: var(--slate) }
-.follow-ups button, .retry { font-size: 14px }
+.exchange .kw, .exchange .q, .exchange .a, #panel-title, #panel-summary, #context li, .follow-up button { unicode-bidi: plaintext }
+/* Arrows of the thread: centred and large; at the end, one arrow fans out to each follow-up */
+.thread-arrow { margin: -4px 0 4px; text-align: center; font-size: 28px; line-height: 1; color: var(--slate) }
+.follow-ups { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 14px; margin: -2px 0 8px }
+.follow-up { display: flex; flex-direction: column; align-items: center; cursor: pointer }
+.follow-up .fan { font-size: 28px; line-height: 1.1; color: var(--slate) }
+[dir="rtl"] .follow-up .fan { transform: scaleX(-1) }   /* ↙ and ↘ swap sides in right-to-left languages */
+.follow-up button, .retry { font-size: 14px }
 .retry { margin-top: 8px }
 
 #context h3 { margin: 14px 0 6px; font-size: 15px }
@@ -176,6 +179,7 @@ dialog {
 }
 dialog::backdrop { background: rgb(0 0 0 / .45) }
 dialog h2 { margin: 0 0 4px; font-size: 20px }
+#settings-form label[hidden] { display: none }
 #settings-form label { display: grid; gap: 4px; margin-top: 12px; font-size: 14px; font-weight: 600 }
 #settings-form input:not([type=checkbox]), #settings-form select {
   min-height: 44px; padding: 8px 12px; font: inherit; font-size: 16px; font-weight: 400; color: inherit;

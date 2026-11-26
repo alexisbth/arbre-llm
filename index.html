@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self' https://api.anthropic.com; object-src 'none'; base-uri 'none'; form-action 'none'">
-<title>Arbre LLM</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self' https://api.anthropic.com https://generativelanguage.googleapis.com https://api.groq.com https://openrouter.ai https://api.openai.com; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Ramifai</title>
 <meta name="theme-color" content="#101418">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
@@ -15,7 +15,7 @@
 <body>
 
 <header id="topbar">
-  <h1>Arbre <small id="subtitle"></small></h1>
+  <h1>Ramifai <small id="subtitle"></small></h1>
   <button id="btn-select" class="outside-select" type="button" data-i18n="select">Select</button>
   <button id="btn-fit" class="outside-select" type="button" data-i18n="fit">Fit</button>
   <button id="btn-menu" class="outside-select" type="button" data-i18n-aria="moreActions" aria-label="More actions" aria-haspopup="true" aria-expanded="false">⋯</button>
@@ -70,17 +70,22 @@
   <form id="settings-form">
     <h2 id="settings-title" data-i18n="settingsTitle">LLM settings</h2>
     <p class="note" data-i18n="settingsDemoNote">Without a key, the app stays in demo mode (simulated answers).</p>
-    <label><span data-i18n="apiKey">Anthropic API key</span>
-      <input id="set-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…">
+    <label><span data-i18n="provider">AI provider</span>
+      <select id="set-provider"></select>
+    </label>
+    <p class="note" id="provider-note"></p>
+    <label><span data-i18n="apiKey">API key</span>
+      <input id="set-key" type="password" autocomplete="off" spellcheck="false">
     </label>
     <label><span data-i18n="model">Model</span>
-      <select id="set-model"></select>
+      <input id="set-model" type="text" list="model-list" autocomplete="off" spellcheck="false">
     </label>
-    <label><span data-i18n="workspace">Workspace ID (only if the API asks for it)</span>
+    <datalist id="model-list"></datalist>
+    <label id="workspace-field"><span data-i18n="workspace">Workspace ID (only if the API asks for it)</span>
       <input id="set-workspace" type="text" autocomplete="off" spellcheck="false">
     </label>
     <label class="check"><input id="set-keep" type="checkbox"> <span data-i18n="keepKey">Keep the key on this device</span></label>
-    <p class="note" data-i18n="keyNote">The key stays on this device and is only sent to api.anthropic.com.</p>
+    <p class="note" id="key-note"></p>
     <label><span data-i18n="language">Interface language</span>
       <input id="set-language" type="text" list="languages" autocomplete="off" spellcheck="false" placeholder="English">
     </label>

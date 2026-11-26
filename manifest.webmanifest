@@ -1,7 +1,7 @@
 {
   "id": "./",
-  "name": "Arbre LLM",
-  "short_name": "Arbre",
+  "name": "Ramifai",
+  "short_name": "Ramifai",
   "description": "Conversations with an LLM shown as a tree (mind map)",
   "lang": "en",
   "start_url": "./",
