@@ -1,0 +1,32 @@
+/* Sign-in and consent page: same colours and type as the app, one column, readable on a phone */
+:root {
+  color-scheme: light dark;
+  --bg: light-dark(#ffffff, #101418);
+  --ink: light-dark(#101418, #eef1f4);
+  --slate: light-dark(#5d6873, #98a3ae);
+  --line: light-dark(#d3d9df, #2e3740);
+  --card: light-dark(#f3f5f7, #182028);
+  --error: #c2410c;
+}
+* { box-sizing: border-box }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif }
+main { max-width: 440px; margin: 0 auto; padding: calc(env(safe-area-inset-top) + 24px) 20px 40px }
+h1 { margin: 0 0 8px; font-size: 24px; font-weight: 800 }
+h2 { margin: 16px 0 8px; font-size: 20px; overflow-wrap: anywhere }
+[hidden] { display: none !important }
+.note { font-size: 14px; color: var(--slate) }
+#status.error { color: var(--error); font-weight: 600 }
+label { display: grid; gap: 4px; margin: 12px 0; font-size: 14px; font-weight: 600 }
+input {
+  min-height: 44px; padding: 8px 12px; font: inherit; font-size: 16px; font-weight: 400; color: inherit;
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+}
+button {
+  min-height: 44px; padding: 0 18px; margin: 4px 8px 4px 0; font: inherit; font-weight: 600; color: inherit;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 22px; cursor: pointer;
+}
+button.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); font-weight: 700 }
+button.link { min-height: 0; padding: 0; margin: 0; border: 0; background: none; color: var(--slate); text-decoration: underline; font-weight: 400 }
+button:disabled { opacity: .5; cursor: default }
+button:focus-visible, input:focus-visible { outline: 3px solid #ffd84a; outline-offset: 2px }
+.actions { display: flex; justify-content: flex-end; flex-wrap: wrap; margin-top: 20px }

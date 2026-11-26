@@ -13,7 +13,7 @@ Your trees are kept as files in a folder of your computer: `Ramifai` in your hom
 
 Any assistant that runs local MCP connectors, for example Claude Desktop, Claude Code, VS Code (Copilot), Cursor or Gemini CLI. On a computer only.
 
-ChatGPT and the phone apps only accept connectors hosted on a server: they will need the remote connector (planned).
+ChatGPT and the phone apps only accept connectors hosted on a server: use the [remote connector](../server/README.md) for them.
 
 ## Install
 

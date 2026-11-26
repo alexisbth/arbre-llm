@@ -25,6 +25,7 @@ This proof of concept is meant to assess the user experience on a phone. Without
 - **Export** (menu ⋯): HTML (the tree drawn, then every box with its content, in one light page), PDF (through the print window), Markdown, OPML (for mind-map apps) or JSON.
 - **Open a file** (menu ⋯): opens a JSON export, or a tree written by the MCP connector (below). It replaces the tree on screen, after confirmation.
 - **MCP connector** (folder [`mcp/`](mcp/)): lets your AI assistant (Claude Desktop, Claude Code, VS Code, Cursor, Gemini CLI…) list your trees, read a branch and add exchanges to it, in a folder of your computer. See [mcp/README.md](mcp/README.md).
+- **Remote connector** (folder [`server/`](server/)): the same tools on a server, for claude.ai, the Claude phone apps and ChatGPT. You sign in to Ramifai with a code received by email, then allow the assistant. See [server/README.md](server/README.md).
 - **AI provider**: menu ⋯ → "Settings", choose the provider, paste its API key and choose the model. With a key, the app asks the provider for its list of models. The answer streams in as it is written, then the LLM fills in the node's card (keyword, emoji, summary). If an error occurs, a "Retry" button appears in the thread.
 
 | Provider | Cost | Where to get a key |
@@ -81,7 +82,7 @@ python3 -m http.server 8000
 ## Next steps
 
 1. Sync and sharing with Supabase (data encrypted on the device): premium feature.
-2. Remote MCP connector (on a server, with sign-in), for phones and ChatGPT, which only accept remote connectors.
+2. Open in the app the trees kept by the remote connector (sign-in in the app).
 3. Build a tree from an old conversation.
 4. A model running inside the browser (WebLLM), free and fully private, on recent phones.
 5. LLM-generated summary for each merged node.
