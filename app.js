@@ -1,4 +1,4 @@
-/* Ramifai — proof of concept (POC), v7
+/* Ramifai — proof of concept (POC), v7.2
  *
  * Overall approach
  * 1. Data: a flat list of nodes { id, parent, q, a, kw, sum, ico }.
@@ -19,6 +19,8 @@
  *    Placement: the app can choose by itself which box a new question follows from.
  *    Synthesis of the tree (written by the LLM, or the summaries put end to end) and exports.
  *    A JSON export can be opened again; the MCP connector (folder mcp/) writes trees in the same format.
+ *    Voice: a dictated question is transcribed (Whisper via Groq, OpenAI, OpenRouter, or the phone's own
+ *    recognition), then written in the question box.
  * 8. Interface language: the English texts (UI) are translated by the LLM into the chosen
  *    language, checked, then kept on the device. Right-to-left languages mirror the layout.
  * Security: all text is inserted with textContent (never innerHTML), no third-party script.
@@ -40,6 +42,7 @@
   const ZOOM_MIN = 0.2, ZOOM_MAX = 3, ZOOM_MAX_FIT = 1.2;
   const WHEEL_SENSITIVITY = 0.0015;
   const TAP_THRESHOLD = 8;             // px: below this, the gesture is a tap, not a drag
+  const SWIPE_DISTANCE = 30;           // px: a vertical move of the panel's handle beyond this opens or closes it
   const DEMO_DELAY = 600;              // ms
   const CONFIRM_DELAY = 3000;          // ms
   const TOAST_DURATION = 2400;         // ms
@@ -119,6 +122,8 @@
   const SIGN_IN_KEY = 'ramifai-sign-in';     // sessionStorage: what a sign-in needs when the user comes back
   const SIGN_IN_RANDOM_BYTES = 32;     // length of the random verifier and state of a sign-in
   const OPEN_MAX_BYTES = 10 * 1024 * 1024;   // largest tree file the app agrees to open
+  const VOICE_MAX_SECONDS = 120;       // a dictation stops by itself after this time (API files are limited in size)
+  const BASE64_CHUNK = 0x8000;         // bytes converted at once when a recording is encoded in base64
   const TRANSLATIONS_KEY = 'arbre-llm-translations';
   const INSTRUCTION = 'You are answering inside a tree-shaped conversation app. Answer in the language of the question, ' +
     'in plain text, without Markdown or LaTeX: write formulas in a readable notation (Unicode) and define every notation.';
@@ -204,6 +209,16 @@
       'To keep it, export it first (JSON).',
     openFailed: 'This file is not a Ramifai tree (JSON export)',
     signIn: 'Sign in with {provider}', signInFailed: 'Sign-in failed: try again, or paste a key',
+    advanced: 'Advanced', voice: 'Voice input', voiceModel: 'Voice model (optional)',
+    voiceAuto: 'Automatic (best available)', voiceGroq: 'Whisper Turbo via Groq · free key',
+    voiceOpenai: 'OpenAI · paid key', voiceOpenrouter: 'OpenRouter · uses your credits',
+    voiceBrowser: 'Phone or browser · no key (Google or Apple)',
+    voiceNote: 'Automatic: Whisper via Groq if a Groq key is set, otherwise OpenAI if its key is set, otherwise the ' +
+      'phone or browser. A paid plan (ChatGPT, Claude, Le Chat…) cannot be connected here: only an API key, or OpenRouter.',
+    dictate: 'Dictate', stopDictation: 'Stop and transcribe', transcribing: 'Transcribing…',
+    voiceNeedsKey: 'Voice input needs a free Groq key, or a browser that recognizes speech',
+    voiceNoKey: 'No key for {provider}: voice input is not possible', micRefused: 'Microphone refused: allow it in the settings',
+    voiceFailed: 'Voice input failed', nothingHeard: 'Nothing heard',
     otherVersion: 'Other version ({by})',
     resetDone: 'Example tree restored', translating: 'Translating the interface…', translated: 'Interface translated',
     translationNeedsKey: 'Translation needs an API key: the interface stays in English.',
@@ -303,6 +318,8 @@
     document.querySelectorAll('[data-i18n-aria]').forEach(e => e.setAttribute('aria-label', t(e.dataset.i18nAria)));
     for (const o of $('set-provider').options) o.textContent = t(PROVIDERS[o.value].label);
     for (const o of $('set-placement').options) o.textContent = t(placementLabel(o.value));
+    for (const o of $('set-voice').options) o.textContent = t(voiceLabel(o.value));
+    if (!recording) setMic('idle');
     $('subtitle').textContent = moving ? t('moveHint') : modeSelect ? t('selectHint') : modeLabel();
     fillWhere();
     $('btn-merge').textContent = t('merge', { count: completeGroup().size });
@@ -857,11 +874,32 @@
     const c = e.target.closest('[data-id]');
     if (c) { pinned = true; select(c.dataset.id, true); }
   });
-  $('handle').addEventListener('click', () => {
-    const open = $('panel').classList.toggle('collapsed') === false;
+  // Panel's handle: tap to open or close it, swipe up to open it, swipe down to close it
+  function setPanel(open) {
+    $('panel').classList.toggle('collapsed', !open);
     $('handle').setAttribute('aria-expanded', String(open));
     centerOn(selection);
     if (open) requestAnimationFrame(() => $('thread').querySelector('.current')?.scrollIntoView({ block: 'nearest' }));
+  }
+  const panelOpen = () => !$('panel').classList.contains('collapsed');
+  let swipeStart = null, swiped = false;      // swiped: the click that follows a swipe is not a tap
+  $('handle').addEventListener('pointerdown', e => {
+    swipeStart = e.clientY;
+    swiped = false;
+    $('handle').setPointerCapture(e.pointerId);
+  });
+  $('handle').addEventListener('pointerup', e => {
+    if (swipeStart == null) return;
+    const dy = e.clientY - swipeStart;
+    swipeStart = null;
+    if (Math.abs(dy) < SWIPE_DISTANCE) return;   // a tap: the click below handles it
+    swiped = true;
+    if ((dy < 0) !== panelOpen()) setPanel(dy < 0);   // up opens, down closes
+  });
+  $('handle').addEventListener('pointercancel', () => { swipeStart = null; });
+  $('handle').addEventListener('click', () => {
+    if (swiped) { swiped = false; return; }
+    setPanel(!panelOpen());
   });
   document.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => {
     document.querySelectorAll('[data-tab]').forEach(o => {
@@ -920,6 +958,107 @@
     answer(n, { economical: auto && settings.placement === 'economical' });
     select(n.id, true);
   });
+
+  // ---------- Voice input: a dictated question is written in the question box, to read over before sending ----------
+  // API engines record the microphone (MediaRecorder), then send the recording to a transcription model.
+  // The "browser" engine (Web Speech API) is the phone's or browser's own recognition (Google or Apple).
+  // pid: provider whose key is used. form: the audio goes as a file (multipart form); otherwise as base64 in JSON.
+  const VOICE = {
+    groq: { pid: 'groq', model: 'whisper-large-v3-turbo', url: 'https://api.groq.com/openai/v1/audio/transcriptions', form: true },
+    openai: { pid: 'openai', model: 'gpt-transcribe', url: 'https://api.openai.com/v1/audio/transcriptions', form: true },
+    openrouter: { pid: 'openrouter', model: 'openai/whisper-large-v3', url: 'https://openrouter.ai/api/v1/audio/transcriptions', form: false },
+    browser: {},
+  };
+  const VOICE_ENGINES = ['auto', ...Object.keys(VOICE)];
+  const AUTO_VOICE = ['groq', 'openai'];        // engines "Automatic" may use, best first (OpenRouter spends credits)
+  const Recognizer = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const canRecord = Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
+  const AUDIO_EXTENSIONS = { webm: 'webm', ogg: 'ogg', mp4: 'm4a', mpeg: 'mp3', wav: 'wav', aac: 'aac' };
+  const audioExtension = type => AUDIO_EXTENSIONS[(type.match(/^audio\/([\w-]+)/) || [])[1]] || 'webm';
+  const voiceLabel = id => 'voice' + id[0].toUpperCase() + id.slice(1);   // key of its text in UI
+  function voiceEngine() {                     // the engine to use now, or null if none is possible
+    if (settings.voice !== 'auto') return settings.voice;
+    return (canRecord && AUTO_VOICE.find(id => settings.keys[VOICE[id].pid])) || (Recognizer ? 'browser' : null);
+  }
+
+  let recording = null;                        // { stop } while the microphone is on
+  function setMic(state) {                     // 'idle', 'on' (recording) or 'busy' (transcribing)
+    const b = $('btn-mic');
+    b.textContent = state === 'on' ? '■' : state === 'busy' ? '…' : '🎤';
+    b.classList.toggle('on', state === 'on');
+    b.disabled = state === 'busy';
+    b.setAttribute('aria-label', t(state === 'on' ? 'stopDictation' : state === 'busy' ? 'transcribing' : 'dictate'));
+  }
+  function insertText(text) {                  // added after what is already written
+    text = text.trim();
+    if (!text) { toast(t('nothingHeard')); return; }
+    input.value = input.value.trim() ? `${input.value.trimEnd()} ${text}` : text;
+    input.dispatchEvent(new Event('input'));    // resizes the box
+  }
+  async function startVoice() {
+    const engine = voiceEngine();
+    if (!engine) { toast(t('voiceNeedsKey')); return; }
+    if (engine === 'browser') { startRecognizer(); return; }
+    const v = VOICE[engine], key = settings.keys[v.pid];
+    if (!key) { toast(t('voiceNoKey', { provider: PROVIDERS[v.pid].name })); return; }
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch { toast(t('micRefused')); return; }
+    const recorder = new MediaRecorder(stream), chunks = [];
+    recorder.ondataavailable = e => chunks.push(e.data);
+    const timer = setTimeout(() => recorder.stop(), VOICE_MAX_SECONDS * 1000);
+    recorder.onstop = async () => {
+      clearTimeout(timer);
+      stream.getTracks().forEach(track => track.stop());   // the microphone turns off
+      recording = null;
+      setMic('busy');
+      try { insertText(await transcribe(engine, key, new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }))); }
+      catch (err) { toast(`${t('voiceFailed')}: ${err.message}`); }
+      setMic('idle');
+    };
+    recorder.start();
+    recording = { stop: () => recorder.stop() };
+    setMic('on');
+  }
+  async function transcribe(engine, key, blob) {
+    const v = VOICE[engine], ext = audioExtension(blob.type);
+    const model = (settings.voice === engine && settings.voiceModel) || v.model;   // a model typed in the settings
+    const auth = { authorization: 'Bearer ' + key };
+    let r;
+    if (v.form) {
+      const body = new FormData();
+      body.append('file', blob, `speech.${ext}`);
+      body.append('model', model);
+      r = await fetch(v.url, { method: 'POST', headers: auth, body });
+    } else {
+      r = await fetch(v.url, { method: 'POST', headers: { ...auth, 'content-type': 'application/json' },
+        body: JSON.stringify({ model, input_audio: { data: await base64Of(blob), format: ext } }) });
+    }
+    if (!r.ok) throw await apiError(r);
+    return (await r.json()).text || '';
+  }
+  async function base64Of(blob) {              // in chunks: one huge String.fromCharCode call would fail
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let s = '';
+    for (let i = 0; i < bytes.length; i += BASE64_CHUNK) s += String.fromCharCode(...bytes.subarray(i, i + BASE64_CHUNK));
+    return btoa(s);
+  }
+  function startRecognizer() {                 // stops by itself after a pause, or when the button is tapped again
+    const r = new Recognizer();
+    r.lang = navigator.language;
+    r.interimResults = false;
+    r.onresult = e => insertText([...e.results].filter(x => x.isFinal).map(x => x[0].transcript).join(' '));
+    r.onerror = e => {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') toast(t('micRefused'));
+      else if (e.error === 'no-speech') toast(t('nothingHeard'));
+      else if (e.error !== 'aborted') toast(t('voiceFailed'));
+    };
+    r.onend = () => { recording = null; setMic('idle'); };
+    try { r.start(); } catch { toast(t('voiceFailed')); return; }
+    recording = { stop: () => r.stop() };
+    setMic('on');
+  }
+  $('btn-mic').hidden = !canRecord && !Recognizer;
+  $('btn-mic').addEventListener('click', () => (recording ? recording.stop() : startVoice()));
 
   // ---------- Versions of an answer ----------
   // A node shows one version (its fields a, kw, sum, ico…); n.versions keeps them all and n.v is the one shown.
@@ -1456,13 +1595,15 @@
   // ---------- LLM settings (keys kept on the device only) ----------
   function loadSettings() {
     const s = readJson(SETTINGS_KEY) || {};
-    const out = { provider: DEFAULT_PROVIDER, keys: {}, models: {}, workspace: '', keep: true, language: '', placement: PLACEMENTS[0], ...s };
+    const out = { provider: DEFAULT_PROVIDER, keys: {}, models: {}, workspace: '', keep: true, language: '', placement: PLACEMENTS[0],
+      voice: 'auto', voiceModel: '', ...s };
     if (s.key) out.keys.anthropic = s.key;      // settings saved by v4, when Claude was the only provider
     if (s.model) out.models.anthropic = s.model;
     delete out.key;
     delete out.model;
     if (!PROVIDERS[out.provider]) out.provider = DEFAULT_PROVIDER;
     if (!PLACEMENTS.includes(out.placement)) out.placement = PLACEMENTS[0];
+    if (!VOICE_ENGINES.includes(out.voice)) out.voice = 'auto';
     return out;
   }
   function saveSettings() {
@@ -1478,6 +1619,11 @@
     const o = htmlEl('option');
     o.value = id;
     $('set-placement').append(o);
+  }
+  for (const id of VOICE_ENGINES) {
+    const o = htmlEl('option');
+    o.value = id;
+    $('set-voice').append(o);
   }
   function placementLabel(id) { return 'placement' + id[0].toUpperCase() + id.slice(1); }   // key of its text in UI
   function modeLabel() {
@@ -1498,6 +1644,9 @@
     $('set-keep').checked = settings.keep;
     $('set-language').value = settings.language;
     $('set-placement').value = settings.placement;
+    $('set-voice').value = settings.voice;
+    $('set-voice-model').value = settings.voiceModel;
+    showVoice();
     $('settings').showModal();
   }
   function showProvider() {
@@ -1563,6 +1712,7 @@
     Object.assign(settings, {
       provider: shown, keys: draft.keys, models: draft.models, workspace: $('set-workspace').value.trim(),
       keep: $('set-keep').checked, language: $('set-language').value.trim(), placement: $('set-placement').value,
+      voice: $('set-voice').value, voiceModel: $('voice-model-field').hidden ? '' : $('set-voice-model').value.trim(),
     });
     saveSettings();
   }
@@ -1572,6 +1722,12 @@
     showProvider();
   });
   $('set-key').addEventListener('change', () => { keepDraft(); loadModels(shown); });
+  function showVoice() {                       // the model field is for an engine chosen by hand, with an API
+    const v = VOICE[$('set-voice').value];
+    $('voice-model-field').hidden = !v?.model;
+    $('set-voice-model').placeholder = v?.model || '';
+  }
+  $('set-voice').addEventListener('change', () => { $('set-voice-model').value = ''; showVoice(); });
   // A key pasted while another provider is shown goes to the provider its prefix belongs to
   const keyOwner = key => Object.keys(PROVIDERS).find(id => PROVIDERS[id].keyPattern.test(key));
   $('set-key').addEventListener('input', () => {
