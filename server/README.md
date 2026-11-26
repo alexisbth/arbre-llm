@@ -13,12 +13,14 @@ This code is public on purpose: anyone can check what the server does with the t
 - **Access to the trees**: every request carries the user's token, and the connector reads and writes with it. The database's row-level security (RLS) only lets each user reach their own trees. The function holds no secret key.
 - **Drawn tree (MCP Apps)**: `show_tree` and `add_exchange` also show the tree drawn (`supabase/functions/mcp/view.ts`). On a computer, Claude opens it in its side panel, next to the chat; in the conversation, a card shows the whole tree and an "Open the tree" button (full screen on a phone). In the panel: pan, zoom, "Fit", and the thread from the start to the chosen box. Colours and font follow Claude's. The drawing asks for the whole tree with `get_tree_view`, a tool only the drawing can call, so the answers are not sent to the model again.
 - **The tools never delete**: they only create trees and add boxes. A box is added in one database statement, so two boxes added at the same moment are both kept.
+- **Protocol versions**: the connector speaks MCP 2026-07-28 (each request carries everything it needs) and the 2025 versions (a handshake first), so older and newer assistants both work. Built with the official TypeScript SDK v2 (`@modelcontextprotocol/server`).
 
 ## Privacy
 
 - To answer from a tree, the assistant must read it, so the server can read it too: these trees are **not** end-to-end encrypted. Supabase encrypts them on its disks, and each user only reaches their own.
 - The trees are stored in the European Union (Paris region).
 - The assistant sees what it reads through the tools, and keeps it according to its own policy (Anthropic, OpenAI…).
+- The server's logs keep, for each request, only its kind (for example `tools/call show_tree`), the names of its fields and the answer's status, to fix problems. Never a question, an answer, a tree or a token.
 
 ## Add the connector to an assistant
 
@@ -37,4 +39,4 @@ This code is public on purpose: anyone can check what the server does with the t
 
 ## Tests done
 
-The function was run locally against a stand-in for Supabase, calling every tool, with and without a valid token. The row-level security was checked in SQL with two users: neither can read nor change the other's trees.
+The function was run locally against a stand-in for Supabase, calling every tool, with and without a valid token, with both protocol versions. The row-level security was checked in SQL with two users: neither can read nor change the other's trees.

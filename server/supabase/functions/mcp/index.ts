@@ -10,18 +10,19 @@
 // 3. Each request carries that token. The trees are read and written with it, so the database's row-level
 //    security only lets the user reach their own trees. This function holds no secret key.
 //
-// Stateless: each request gets its own MCP server and transport (no session to keep between requests).
+// Stateless: each request gets its own MCP server (no session to keep between requests). Both versions of the
+// protocol are served: 2026-07-28 (each request carries everything it needs) and the 2025 versions
+// (initialize first), which some assistants still use.
 // show_tree and add_exchange also draw the tree: in Claude's side panel on a computer, full screen on a phone
 // (MCP Apps page, see view.ts).
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
-import { McpServer } from 'npm:@modelcontextprotocol/sdk@1.32.2/server/mcp.js';
-import { WebStandardStreamableHTTPServerTransport } from 'npm:@modelcontextprotocol/sdk@1.32.2/server/webStandardStreamableHttp.js';
+import { McpServer, createMcpHandler } from 'npm:@modelcontextprotocol/server@2.4.0';
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { z } from 'npm:zod@4';
 import * as tree from './tree.ts';
 import { VIEW_HTML } from './view.ts';
 
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const PUBLIC_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;          // public key: only lets requests reach the API
 const RESOURCE = `${SUPABASE_URL}/functions/v1/mcp`;            // this connector's public address
@@ -96,7 +97,7 @@ function buildServer(db: SupabaseClient): McpServer {
   server.registerTool('create_tree', {
     title: 'Create a tree',
     description: 'Create an empty Ramifai tree. Returns its name, to use with the other tools.',
-    inputSchema: { title: z.string().min(1).max(tree.TITLE_LENGTH).describe('Title of the tree, shown on its first box') },
+    inputSchema: z.object({ title: z.string().min(1).max(tree.TITLE_LENGTH).describe('Title of the tree, shown on its first box') }),
     annotations: adds,
   }, reply(async ({ title }: { title: string }) => {
     const { data: rows, error } = await db.from('trees').select('name');
@@ -111,7 +112,7 @@ function buildServer(db: SupabaseClient): McpServer {
     title: 'Show a tree',
     description: 'Plan of a tree: one line per box (id · emoji keyword — summary), indented under its parent. ' +
       'The user also sees the tree drawn.',
-    inputSchema: { tree: treeName },
+    inputSchema: z.object({ tree: treeName }),
     annotations: readOnly,
     _meta: view,
   }, reply(async ({ tree: name }: { tree: string }) => ({ text: tree.outline(await load(name)), data: { tree: name } })));
@@ -120,7 +121,7 @@ function buildServer(db: SupabaseClient): McpServer {
   server.registerTool('get_tree_view', {
     title: 'Tree for the drawing',
     description: 'Whole tree, for the drawn view only.',
-    inputSchema: { tree: treeName },
+    inputSchema: z.object({ tree: treeName }),
     annotations: readOnly,
     _meta: { ui: { resourceUri: VIEW_URI, visibility: ['app'] } },
   }, reply(async ({ tree: name }: { tree: string }) => {
@@ -133,7 +134,7 @@ function buildServer(db: SupabaseClient): McpServer {
     title: 'Read a branch',
     description: `Context of a box: the path from the first box to it, as summaries, with the last ${tree.FULL_EXCHANGES} ` +
       'exchanges in full. Read it before answering a question that follows from this box.',
-    inputSchema: { tree: treeName, box: z.string().max(tree.NAME_LENGTH).describe('Id of the box, as given by show_tree') },
+    inputSchema: z.object({ tree: treeName, box: z.string().max(tree.NAME_LENGTH).describe('Id of the box, as given by show_tree') }),
     annotations: readOnly,
   }, reply(async ({ tree: name, box }: { tree: string; box: string }) => tree.branch(await load(name), box)));
 
@@ -141,7 +142,7 @@ function buildServer(db: SupabaseClient): McpServer {
     title: 'Add an exchange',
     description: 'Record a question and its answer as a new box under a parent box. Returns the id of the new box. ' +
       'The user sees the tree drawn, with the new box.',
-    inputSchema: {
+    inputSchema: z.object({
       tree: treeName,
       parent: z.string().max(tree.NAME_LENGTH).describe(`Id of the box this exchange follows from ("${tree.ROOT}" for a new branch from the start)`),
       question: z.string().min(1).max(TEXT_LENGTH).describe("The user's question, as asked"),
@@ -149,7 +150,7 @@ function buildServer(db: SupabaseClient): McpServer {
       keyword: z.string().min(1).max(tree.KEYWORD_LENGTH).describe('1 to 3 words naming the box'),
       summary: z.string().min(1).max(TEXT_LENGTH).describe('One sentence summing up the answer'),
       emoji: z.string().max(EMOJI_LENGTH).optional().describe('One emoji for the box'),
-    },
+    }),
     annotations: adds,
     _meta: view,
   }, reply(async (a: { tree: string; parent: string; question: string; answer: string; keyword: string; summary: string; emoji?: string }) => {
@@ -172,6 +173,14 @@ function buildServer(db: SupabaseClient): McpServer {
   return server;
 }
 
+// Answers the MCP requests, in both versions of the protocol. The server is built for each request with the
+// database client of the user who sent it (passed in authInfo by Deno.serve below, once the token is checked).
+const mcp = createMcpHandler(({ authInfo }) => {
+  const db = authInfo?.extra?.db as SupabaseClient | undefined;
+  if (!db) throw new Error('No signed-in user for this request.');
+  return buildServer(db);
+});
+
 Deno.serve(async req => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
   if (new URL(req.url).pathname.endsWith(METADATA_PATH)) return metadata();
@@ -185,9 +194,26 @@ Deno.serve(async req => {
   const { data: user, error } = await db.auth.getUser(token);   // asks Supabase Auth whether the token is valid
   if (error || !user?.user) return unauthorized('The token is not valid or has expired.');
 
-  const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-  await buildServer(db).connect(transport);
-  const response = await transport.handleRequest(req);
+  const body = await req.clone().text();
+  const answer = await mcp.fetch(req, { authInfo: { token, clientId: '', scopes: [], extra: { db } } });
+  const response = new Response(answer.body, answer);           // a copy whose headers can be changed
   for (const [k, v] of Object.entries(CORS)) response.headers.set(k, v);
+  console.log(JSON.stringify({ rpc: describe(body), version: req.headers.get('mcp-protocol-version'), status: response.status,
+    error: response.status >= 400 ? await response.clone().text() : undefined }));
   return response;
 });
+
+// What a request asks for, for the logs: the kind of request and the names of its fields, never their values
+// (no question, answer, tree or token)
+function describe(body: string): string[] {
+  try {
+    const m = JSON.parse(body);
+    return (Array.isArray(m) ? m : [m]).map((x) => {
+      const p = x?.params ?? {};
+      const kind = x?.method ?? (x && 'result' in x ? 'result' : x && 'error' in x ? 'error' : '?');
+      return [kind, typeof p.name === 'string' ? p.name : '', typeof p.protocolVersion === 'string' ? p.protocolVersion : '',
+        `fields: ${Object.keys(p).join(',')}`, p.capabilities ? `capabilities: ${Object.keys(p.capabilities).join(',')}` : '']
+        .filter(Boolean).join(' ');
+    });
+  } catch { return ['not JSON']; }
+}
