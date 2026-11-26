@@ -1,6 +1,6 @@
 // Ramifai MCP connector (remote), as a Supabase Edge Function.
-// The same tools as the local connector (folder mcp/), for assistants that only accept connectors on a server:
-// claude.ai and its phone apps, ChatGPT, etc.
+// The tools of the local connector (folder mcp/), plus start_ramifai and the drawn tree, for assistants that only
+// accept connectors on a server: claude.ai and its phone apps, ChatGPT, etc.
 //
 // How the user is recognized (MCP authorization, OAuth 2.1):
 // 1. Without a valid token, the answer is 401, with the address of this connector's description
@@ -13,8 +13,9 @@
 // Stateless: each request gets its own MCP server (no session to keep between requests). Both versions of the
 // protocol are served: 2026-07-28 (each request carries everything it needs) and the 2025 versions
 // (initialize first), which some assistants still use.
-// show_tree and add_exchange also draw the tree: in Claude's side panel on a computer, full screen on a phone
-// (MCP Apps page, see view.ts).
+// start_ramifai and show_tree also draw the tree: in Claude's side panel on a computer, full screen on a phone
+// (MCP Apps page, see view.ts). The drawing updates itself as boxes are added. Tapping a box there marks it
+// "Next question here": the next box added goes under it, whatever box the assistant chose (column next_parent).
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { McpServer, createMcpHandler } from 'npm:@modelcontextprotocol/server@2.4.0';
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
@@ -22,22 +23,30 @@ import { z } from 'npm:zod@4';
 import * as tree from './tree.ts';
 import { VIEW_HTML } from './view.ts';
 
-const VERSION = '0.4.0';
+const VERSION = '0.5.0';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const PUBLIC_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;          // public key: only lets requests reach the API
 const RESOURCE = `${SUPABASE_URL}/functions/v1/mcp`;            // this connector's public address
 const METADATA_PATH = '/.well-known/oauth-protected-resource';
 const TEXT_LENGTH = 100_000;                                    // longest question or answer accepted
 const EMOJI_LENGTH = 8;
-const VIEW_URI = 'ui://ramifai/tree-v2.html';                   // the tree drawn in the assistant (view.ts)
+const VIEW_URI = 'ui://ramifai/tree-v3.html';                   // the tree drawn in the assistant (view.ts)
 const VIEW_MIME = 'text/html;profile=mcp-app';                  // MCP Apps page
-const view = { ui: { resourceUri: VIEW_URI } };                 // tools whose result is shown with the drawn tree
+// tools whose result is shown with the drawn tree (both keys, as the official MCP Apps kit writes them)
+const view = { ui: { resourceUri: VIEW_URI }, 'ui/resourceUri': VIEW_URI };
+const NEW_TREE_TITLE = 'New tree';
 
 const INSTRUCTIONS = 'Ramifai keeps conversations as trees. Each box holds one question and its answer, with a short ' +
-  'keyword, a one-sentence summary and an emoji; its parent is the box it follows from. To continue in a tree: ' +
-  'show_tree to see the boxes, read_branch on the box to follow from (it gives the context), answer the user, then ' +
-  'add_exchange to record the question and your answer under that box. If the tree or the box is unclear, ask the user. ' +
-  'show_tree and add_exchange also draw the tree for the user, so there is no need to describe its shape.';
+  'keyword, a one-sentence summary and an emoji; its parent is the box it follows from. When the user says "start ' +
+  'Ramifai" (in any language), call start_ramifai: from then on, record every exchange with add_exchange. ' +
+  'start_ramifai and show_tree also draw the tree for the user, so there is no need to describe its shape.';
+
+// What the assistant must do once Ramifai is started; repeated in every add_exchange answer so it is not forgotten
+const RULE = 'Ramifai is on in this conversation until the user says to stop. After each of your answers, call ' +
+  'add_exchange with the user\'s question and your full answer. Parent: the box the question follows from by subject; ' +
+  '"root" for a new subject; the last box if unsure. If the user tapped a box in the drawing ("Next question here"), ' +
+  'the exchange goes under that box whatever parent you give; when you are told which box, read_branch on it before ' +
+  'answering. Do not describe the tree\'s shape: the user sees it drawn.';
 
 // Answers to browsers too (e.g. the MCP Inspector), which ask before sending these headers
 const CORS = {
@@ -73,15 +82,52 @@ function buildServer(db: SupabaseClient): McpServer {
         : { content: [{ type: 'text' as const, text: r.text }], structuredContent: r.data };
     } catch (e) { return { content: [{ type: 'text' as const, text: (e as Error).message }], isError: true }; }
   };
-  const load = async (name: string): Promise<tree.Tree> => {
-    const { data, error } = await db.from('trees').select('data').eq('name', name).maybeSingle();
+  // A tree's row: the tree, the box tapped in the drawing (next_parent) and the time of the last change
+  type Row = { data: tree.Tree; next_parent: string | null; updated_at: string };
+  const loadRow = async (name: string): Promise<Row> => {
+    const { data, error } = await db.from('trees').select('data, next_parent, updated_at').eq('name', name).maybeSingle();
     if (error) throw new Error(error.message);
     if (!data) throw new Error(`No tree named "${name}". Use list_trees to see the trees.`);
-    return data.data as tree.Tree;
+    return data as Row;
+  };
+  const load = async (name: string) => (await loadRow(name)).data;
+  const create = async (title: string): Promise<string> => {
+    const { data: rows, error } = await db.from('trees').select('name');
+    if (error) throw new Error(error.message);
+    const name = tree.freeName(title, new Set(rows.map(r => r.name)));
+    const { error: insertError } = await db.from('trees').insert({ name, data: tree.newTree(title) });
+    if (insertError) throw new Error(insertError.message);
+    return name;
+  };
+  const setNext = async (name: string, box: string | null) => {
+    const { error } = await db.from('trees').update({ next_parent: box }).eq('name', name);
+    if (error) throw new Error(error.message);
   };
   const treeName = z.string().max(tree.NAME_LENGTH).describe('Name of the tree, as given by list_trees');
+  const boxId = z.string().max(tree.NAME_LENGTH);
   const readOnly = { readOnlyHint: true, openWorldHint: false };
   const adds = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
+  const appOnly = { ui: { resourceUri: VIEW_URI, visibility: ['app'] } };   // tools only the drawing can call
+
+  server.registerTool('start_ramifai', {
+    title: 'Start Ramifai',
+    description: 'Call when the user says "start Ramifai" (in any language, e.g. "démarrer Ramifai") or asks to keep ' +
+      'this conversation as a Ramifai tree. Opens the tree the user names, or else creates a new one, and draws it. ' +
+      'From then on, record every exchange with add_exchange.',
+    inputSchema: z.object({
+      tree: treeName.optional().describe('Name of an existing tree, only if the user named one (see list_trees)'),
+      title: z.string().min(1).max(tree.TITLE_LENGTH).optional()
+        .describe('Title of the new tree when no tree is named: the subject of the conversation, or "New tree"'),
+    }),
+    annotations: adds,
+    _meta: view,
+  }, reply(async ({ tree: named, title }: { tree?: string; title?: string }) => {
+    const name = named ?? await create(title ?? NEW_TREE_TITLE);
+    const data = await load(name);
+    await setNext(name, null);              // a box tapped before this start is forgotten
+    return { text: `Ramifai started on the tree "${name}" (${tree.titleOf(data)}). ${RULE}\n\nBoxes:\n${tree.outline(data)}`,
+      data: { tree: name } };
+  }));
 
   server.registerTool('list_trees', {
     title: 'List the trees',
@@ -90,21 +136,17 @@ function buildServer(db: SupabaseClient): McpServer {
   }, reply(async () => {
     const { data, error } = await db.from('trees').select('name, data, updated_at').order('name');
     if (error) throw new Error(error.message);
-    if (!data.length) return 'No tree yet. Use create_tree to start one.';
+    if (!data.length) return 'No tree yet. Use start_ramifai or create_tree to start one.';
     return data.map(t => `${t.name} — ${tree.titleOf(t.data)} (${t.data.nodes.length} boxes, changed ${t.updated_at.split('T')[0]})`).join('\n');
   }));
 
   server.registerTool('create_tree', {
     title: 'Create a tree',
-    description: 'Create an empty Ramifai tree. Returns its name, to use with the other tools.',
+    description: 'Create an empty Ramifai tree, without starting Ramifai. Returns its name, to use with the other tools.',
     inputSchema: z.object({ title: z.string().min(1).max(tree.TITLE_LENGTH).describe('Title of the tree, shown on its first box') }),
     annotations: adds,
   }, reply(async ({ title }: { title: string }) => {
-    const { data: rows, error } = await db.from('trees').select('name');
-    if (error) throw new Error(error.message);
-    const name = tree.freeName(title, new Set(rows.map(r => r.name)));
-    const { error: insertError } = await db.from('trees').insert({ name, data: tree.newTree(title) });
-    if (insertError) throw new Error(insertError.message);
+    const name = await create(title);
     return `Tree "${name}" created. Its first box has the id "${tree.ROOT}": add the first exchange under it.`;
   }));
 
@@ -117,34 +159,52 @@ function buildServer(db: SupabaseClient): McpServer {
     _meta: view,
   }, reply(async ({ tree: name }: { tree: string }) => ({ text: tree.outline(await load(name)), data: { tree: name } })));
 
-  // Only for the drawn tree (the page calls it): the whole tree, which the model does not need to receive again
+  // For the drawing only: the whole tree (the model does not need to receive it again), with the tapped box.
+  // When the drawing already has the latest version (same "changed" time), only that time is sent back.
   server.registerTool('get_tree_view', {
     title: 'Tree for the drawing',
     description: 'Whole tree, for the drawn view only.',
-    inputSchema: z.object({ tree: treeName }),
+    inputSchema: z.object({ tree: treeName, known: z.string().max(tree.NAME_LENGTH).optional() }),
     annotations: readOnly,
-    _meta: { ui: { resourceUri: VIEW_URI, visibility: ['app'] } },
-  }, reply(async ({ tree: name }: { tree: string }) => {
-    const data = await load(name);
-    const nodes = data.nodes.map(({ id, parent, q, a, kw, sum, ico }) => ({ id, parent, q, a, kw, sum, ico }));
-    return { text: `Tree "${name}" sent to the view.`, data: { name, title: tree.titleOf(data), nodes } };
+    _meta: appOnly,
+  }, reply(async ({ tree: name, known }: { tree: string; known?: string }) => {
+    const row = await loadRow(name);
+    if (known === row.updated_at) return { text: 'No change.', data: { name, changed: row.updated_at, unchanged: true } };
+    const nodes = row.data.nodes.map(({ id, parent, q, a, kw, sum, ico }) => ({ id, parent, q, a, kw, sum, ico }));
+    return { text: `Tree "${name}" sent to the view.`,
+      data: { name, title: tree.titleOf(row.data), nodes, next: row.next_parent, changed: row.updated_at } };
+  }));
+
+  // For the drawing only: the box the user tapped ("Next question here"), or null to let the assistant choose again
+  server.registerTool('pick_box', {
+    title: 'Next question here',
+    description: 'Mark the box the next exchange goes under, for the drawn view only.',
+    inputSchema: z.object({ tree: treeName, box: boxId.nullable() }),
+    annotations: { ...adds, idempotentHint: true },
+    _meta: appOnly,
+  }, reply(async ({ tree: name, box }: { tree: string; box: string | null }) => {
+    if (box !== null) tree.find(await load(name), box);
+    await setNext(name, box);
+    return { text: box ? `The next box goes under "${box}".` : 'The assistant chooses where the next box goes.',
+      data: { tree: name, next: box } };
   }));
 
   server.registerTool('read_branch', {
     title: 'Read a branch',
     description: `Context of a box: the path from the first box to it, as summaries, with the last ${tree.FULL_EXCHANGES} ` +
       'exchanges in full. Read it before answering a question that follows from this box.',
-    inputSchema: z.object({ tree: treeName, box: z.string().max(tree.NAME_LENGTH).describe('Id of the box, as given by show_tree') }),
+    inputSchema: z.object({ tree: treeName, box: boxId.describe('Id of the box, as given by show_tree') }),
     annotations: readOnly,
   }, reply(async ({ tree: name, box }: { tree: string; box: string }) => tree.branch(await load(name), box)));
 
   server.registerTool('add_exchange', {
     title: 'Add an exchange',
-    description: 'Record a question and its answer as a new box under a parent box. Returns the id of the new box. ' +
-      'The user sees the tree drawn, with the new box.',
+    description: 'Record a question and its answer as a new box. Once Ramifai is started, call it after each answer. ' +
+      'If the user tapped a box in the drawing, the box goes under it, whatever parent is given. Returns the new box.',
     inputSchema: z.object({
       tree: treeName,
-      parent: z.string().max(tree.NAME_LENGTH).describe(`Id of the box this exchange follows from ("${tree.ROOT}" for a new branch from the start)`),
+      parent: boxId.optional().describe(`Id of the box the question follows from by subject ("${tree.ROOT}" for a new ` +
+        'subject). Leave out to follow the last box.'),
       question: z.string().min(1).max(TEXT_LENGTH).describe("The user's question, as asked"),
       answer: z.string().min(1).max(TEXT_LENGTH).describe('The full answer'),
       keyword: z.string().min(1).max(tree.KEYWORD_LENGTH).describe('1 to 3 words naming the box'),
@@ -152,17 +212,17 @@ function buildServer(db: SupabaseClient): McpServer {
       emoji: z.string().max(EMOJI_LENGTH).optional().describe('One emoji for the box'),
     }),
     annotations: adds,
-    _meta: view,
-  }, reply(async (a: { tree: string; parent: string; question: string; answer: string; keyword: string; summary: string; emoji?: string }) => {
+  }, reply(async (a: { tree: string; parent?: string; question: string; answer: string; keyword: string; summary: string; emoji?: string }) => {
     const data = await load(a.tree);
-    tree.find(data, a.parent);
-    const node: tree.Node = { id: tree.newId(data), parent: a.parent, q: a.question, a: a.answer, kw: a.keyword,
+    const given = a.parent ?? data.nodes[data.nodes.length - 1].id;
+    const node: tree.Node = { id: tree.newId(data), parent: given, q: a.question, a: a.answer, kw: a.keyword,
       sum: a.summary, ico: a.emoji || '', by: 'MCP' };
-    // added in one database statement, so two boxes added at the same moment are both kept
-    const { data: added, error } = await db.rpc('add_tree_node', { tree_name: a.tree, node });
+    // one database statement: puts the box under the tapped box if there is one, else under the given parent
+    const { data: used, error } = await db.rpc('add_tree_node', { tree_name: a.tree, node });
     if (error) throw new Error(error.message);
-    if (!added) throw new Error(`The tree "${a.tree}" or the box "${a.parent}" no longer exists.`);
-    return { text: `Box "${node.id}" added under "${a.parent}".`, data: { tree: a.tree, box: node.id } };
+    if (!used) throw new Error(`No box "${given}" in the tree "${a.tree}". Use show_tree to see the ids.`);
+    const where = used === given ? `under "${used}"` : `under "${used}", the box the user tapped`;
+    return `Box "${node.id}" added ${where}. If Ramifai is on, record the next exchange too, unless the user said to stop.`;
   }));
 
   server.registerResource('tree-view', VIEW_URI, { title: 'Ramifai tree', mimeType: VIEW_MIME,
