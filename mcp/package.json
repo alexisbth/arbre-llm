@@ -1,0 +1,31 @@
+{
+  "name": "ramifai-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local MCP connector for Ramifai: lets an AI assistant read and grow the Ramifai trees kept on this computer.",
+  "type": "module",
+  "bin": {
+    "ramifai-mcp": "server.js"
+  },
+  "main": "server.js",
+  "files": [
+    "server.js",
+    "trees.js"
+  ],
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alexisbth/arbre-llm.git",
+    "directory": "mcp"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
+  }
+}

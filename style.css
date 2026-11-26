@@ -197,10 +197,12 @@ dialog h2 { margin: 0 0 4px; font-size: 20px }
   min-height: 44px; padding: 8px 12px; font: inherit; font-size: 16px; font-weight: 400; color: inherit;
   background: var(--card); border: 1px solid var(--line); border-radius: 12px;
 }
-#key-link {
+#key-link, #btn-sign-in {
   display: inline-flex; align-items: center; min-height: 44px; margin-top: 8px; padding: 8px 14px;
   font-size: 14px; font-weight: 600; color: var(--acc-ink); background: var(--acc); border-radius: 12px; text-decoration: none;
 }
+#btn-sign-in { display: flex; border: 0 }   /* on its own line, above the key field */
+#btn-sign-in[hidden] { display: none }
 #settings-form label.check { display: flex; align-items: center; gap: 10px; font-weight: 500 }
 #settings-form input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--ink) }
 .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 16px }

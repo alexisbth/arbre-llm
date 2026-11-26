@@ -22,6 +22,8 @@ This proof of concept is meant to assess the user experience on a phone. Without
 - **Synthesis** (menu ⋯, or the button that appears when the path is nearly full): written by the LLM so you can carry on from where you are, here or in another app ("Copy"), or in a new branch of the same tree. If the AI cannot be reached, the summaries of the boxes are put end to end instead.
 - **Limit reached** (quota or credits used up): the app offers to continue with another provider that has a key, or to open the synthesis.
 - **Export** (menu ⋯): HTML (the tree drawn, then every box with its content, in one light page), PDF (through the print window), Markdown, OPML (for mind-map apps) or JSON.
+- **Open a file** (menu ⋯): opens a JSON export, or a tree written by the MCP connector (below). It replaces the tree on screen, after confirmation.
+- **MCP connector** (folder [`mcp/`](mcp/)): lets your AI assistant (Claude Desktop, Claude Code, VS Code, Cursor, Gemini CLI…) list your trees, read a branch and add exchanges to it, in a folder of your computer. See [mcp/README.md](mcp/README.md).
 - **AI provider**: menu ⋯ → "Settings", choose the provider, paste its API key and choose the model. With a key, the app asks the provider for its list of models. The answer streams in as it is written, then the LLM fills in the node's card (keyword, emoji, summary). If an error occurs, a "Retry" button appears in the thread.
 
 | Provider | Cost | Where to get a key |
@@ -29,13 +31,15 @@ This proof of concept is meant to assess the user experience on a phone. Without
 | Claude (Anthropic) | Paid (prepaid credits) | platform.claude.com |
 | Gemini (Google) | Free tier; Google may use free-tier conversations to improve its products | aistudio.google.com |
 | Groq (open models) | Free tier, no card; beyond the limits requests are refused, not billed | console.groq.com |
-| OpenRouter | Free models (`openrouter/free` picks one), about 50 free requests a day | openrouter.ai |
+| OpenRouter | Free models (`openrouter/free` picks one), about 50 free requests a day | "Sign in with OpenRouter" button, or openrouter.ai |
 | ChatGPT (OpenAI) | Paid; ChatGPT Pro and Business include monthly API credits | platform.openai.com |
 
 A question uses 2 requests (the answer, then the node's card), plus 1 when the app places it automatically in accurate mode.
 
+- **Sign in with OpenRouter** (Settings, provider OpenRouter): no key to copy. The app sends you to openrouter.ai, you sign in, and you come back with a key linked to your account. The app uses OAuth PKCE: a random secret stays in the tab, only its hash leaves it, so a stolen sign-in code alone is useless. On an iPhone, if the app installed on the home screen does not get the key, sign in from Safari, or paste a key.
+
 - **Interface language**: menu ⋯ → "Settings" → "Interface language", pick a suggestion or type any language. The first time, the LLM translates all the interface texts in one call (Haiku for Claude); the translation is then kept on the device. "Retranslate" redoes it. Right-to-left languages (Arabic, Hebrew…) mirror the layout. Without an API key the interface stays in English.
-- **Menu ⋯**: settings, synthesis, export, reset the example (tap twice).
+- **Menu ⋯**: settings, synthesis, open a file, export, reset the example (tap twice).
 
 ## API key and security
 
@@ -76,9 +80,11 @@ python3 -m http.server 8000
 ## Next steps
 
 1. Sync and sharing with Supabase (data encrypted on the device): premium feature.
-2. A model running inside the browser (WebLLM), free and fully private, on recent phones.
-3. LLM-generated summary for each merged node.
-4. Move storage to IndexedDB, with file import and export.
+2. Remote MCP connector (on a server, with sign-in), for phones and ChatGPT, which only accept remote connectors.
+3. Build a tree from an old conversation.
+4. A model running inside the browser (WebLLM), free and fully private, on recent phones.
+5. LLM-generated summary for each merged node.
+6. Move storage to IndexedDB, with several trees on the device.
 
 ## License
 
