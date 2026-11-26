@@ -23,7 +23,7 @@ import { z } from 'npm:zod@4';
 import * as tree from './tree.ts';
 import { VIEW_HTML } from './view.ts';
 
-const VERSION = '0.5.0';
+const VERSION = '0.5.1';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const PUBLIC_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;          // public key: only lets requests reach the API
 const RESOURCE = `${SUPABASE_URL}/functions/v1/mcp`;            // this connector's public address
@@ -34,16 +34,19 @@ const VIEW_URI = 'ui://ramifai/tree-v3.html';                   // the tree draw
 const VIEW_MIME = 'text/html;profile=mcp-app';                  // MCP Apps page
 // tools whose result is shown with the drawn tree (both keys, as the official MCP Apps kit writes them)
 const view = { ui: { resourceUri: VIEW_URI }, 'ui/resourceUri': VIEW_URI };
-const NEW_TREE_TITLE = 'New tree';
+const NEW_TREE_NAME = 'New tree';
+const ROOT_TITLE = 'Start';                                    // label of the first box: the tree's name is not written there
 
 const INSTRUCTIONS = 'Ramifai keeps conversations as trees. Each box holds one question and its answer, with a short ' +
   'keyword, a one-sentence summary and an emoji; its parent is the box it follows from. When the user says "start ' +
-  'Ramifai" (in any language), call start_ramifai: from then on, record every exchange with add_exchange. ' +
+  'Ramifai" (in any language), call start_ramifai (with the tree name if the user gives one): from then on, record every exchange with ' +
+  'add_exchange, except the start command itself, which is not part of the tree. ' +
   'start_ramifai and show_tree also draw the tree for the user, so there is no need to describe its shape.';
 
 // What the assistant must do once Ramifai is started; repeated in every add_exchange answer so it is not forgotten
 const RULE = 'Ramifai is on in this conversation until the user says to stop. After each of your answers, call ' +
-  'add_exchange with the user\'s question and your full answer. Parent: the box the question follows from by subject; ' +
+  'add_exchange with the user\'s question and your full answer. Never record the start command itself ("start ' +
+  'Ramifai", the tree\'s name...): only the real questions that follow. Parent: the box the question follows from by subject; ' +
   '"root" for a new subject; the last box if unsure. If the user tapped a box in the drawing ("Next question here"), ' +
   'the exchange goes under that box whatever parent you give; when you are told which box, read_branch on it before ' +
   'answering. Do not describe the tree\'s shape: the user sees it drawn.';
@@ -91,11 +94,11 @@ function buildServer(db: SupabaseClient): McpServer {
     return data as Row;
   };
   const load = async (name: string) => (await loadRow(name)).data;
-  const create = async (title: string): Promise<string> => {
+  const create = async (wanted: string): Promise<string> => {
     const { data: rows, error } = await db.from('trees').select('name');
     if (error) throw new Error(error.message);
-    const name = tree.freeName(title, new Set(rows.map(r => r.name)));
-    const { error: insertError } = await db.from('trees').insert({ name, data: tree.newTree(title) });
+    const name = tree.freeName(wanted, new Set(rows.map(r => r.name)));
+    const { error: insertError } = await db.from('trees').insert({ name, data: tree.newTree(ROOT_TITLE) });
     if (insertError) throw new Error(insertError.message);
     return name;
   };
@@ -112,20 +115,23 @@ function buildServer(db: SupabaseClient): McpServer {
   server.registerTool('start_ramifai', {
     title: 'Start Ramifai',
     description: 'Call when the user says "start Ramifai" (in any language, e.g. "démarrer Ramifai") or asks to keep ' +
-      'this conversation as a Ramifai tree. Opens the tree the user names, or else creates a new one, and draws it. ' +
-      'From then on, record every exchange with add_exchange.',
+      'this conversation as a Ramifai tree. Opens the tree of that name, or creates it if it does not exist, and draws ' +
+      'it. From then on, record every exchange with add_exchange, but not the start command itself.',
     inputSchema: z.object({
-      tree: treeName.optional().describe('Name of an existing tree, only if the user named one (see list_trees)'),
-      title: z.string().min(1).max(tree.TITLE_LENGTH).optional()
-        .describe('Title of the new tree when no tree is named: the subject of the conversation, or "New tree"'),
+      tree: z.string().min(1).max(tree.TITLE_LENGTH).optional()
+        .describe('Name the user gave to the tree (e.g. "test2"), exactly as said: opened if it exists, created if not. ' +
+          'Leave out if the user gave no name.'),
     }),
     annotations: adds,
     _meta: view,
-  }, reply(async ({ tree: named, title }: { tree?: string; title?: string }) => {
-    const name = named ?? await create(title ?? NEW_TREE_TITLE);
+  }, reply(async ({ tree: wanted }: { tree?: string }) => {
+    let name = wanted ?? NEW_TREE_NAME;
+    const { data: found, error } = wanted ? await db.from('trees').select('name').eq('name', wanted).maybeSingle() : { data: null, error: null };
+    if (error) throw new Error(error.message);
+    if (!found) name = await create(name);          // the tree's name is the one asked for; its first box is just "Start"
     const data = await load(name);
     await setNext(name, null);              // a box tapped before this start is forgotten
-    return { text: `Ramifai started on the tree "${name}" (${tree.titleOf(data)}). ${RULE}\n\nBoxes:\n${tree.outline(data)}`,
+    return { text: `Ramifai started on the tree "${name}" (${data.nodes.length - 1} boxes). ${RULE}\n\nBoxes:\n${tree.outline(data)}`,
       data: { tree: name } };
   }));
 
@@ -137,16 +143,16 @@ function buildServer(db: SupabaseClient): McpServer {
     const { data, error } = await db.from('trees').select('name, data, updated_at').order('name');
     if (error) throw new Error(error.message);
     if (!data.length) return 'No tree yet. Use start_ramifai or create_tree to start one.';
-    return data.map(t => `${t.name} — ${tree.titleOf(t.data)} (${t.data.nodes.length} boxes, changed ${t.updated_at.split('T')[0]})`).join('\n');
+    return data.map(t => `${t.name} (${t.data.nodes.length} boxes, changed ${t.updated_at.split('T')[0]})`).join('\n');
   }));
 
   server.registerTool('create_tree', {
     title: 'Create a tree',
     description: 'Create an empty Ramifai tree, without starting Ramifai. Returns its name, to use with the other tools.',
-    inputSchema: z.object({ title: z.string().min(1).max(tree.TITLE_LENGTH).describe('Title of the tree, shown on its first box') }),
+    inputSchema: z.object({ name: z.string().min(1).max(tree.TITLE_LENGTH).describe('Name of the tree') }),
     annotations: adds,
-  }, reply(async ({ title }: { title: string }) => {
-    const name = await create(title);
+  }, reply(async ({ name: wanted }: { name: string }) => {
+    const name = await create(wanted);
     return `Tree "${name}" created. Its first box has the id "${tree.ROOT}": add the first exchange under it.`;
   }));
 
@@ -172,7 +178,7 @@ function buildServer(db: SupabaseClient): McpServer {
     if (known === row.updated_at) return { text: 'No change.', data: { name, changed: row.updated_at, unchanged: true } };
     const nodes = row.data.nodes.map(({ id, parent, q, a, kw, sum, ico }) => ({ id, parent, q, a, kw, sum, ico }));
     return { text: `Tree "${name}" sent to the view.`,
-      data: { name, title: tree.titleOf(row.data), nodes, next: row.next_parent, changed: row.updated_at } };
+      data: { name, title: name, nodes, next: row.next_parent, changed: row.updated_at } };
   }));
 
   // For the drawing only: the box the user tapped ("Next question here"), or null to let the assistant choose again

@@ -474,7 +474,7 @@ svg { display: block; width: 100%; height: 100% }
   window.addEventListener('resize', function () { if (tree) fit(); });
 
   // ---------- Start ----------
-  request('ui/initialize', { appInfo: { name: 'Ramifai tree', version: '0.5.0' },
+  request('ui/initialize', { appInfo: { name: 'Ramifai tree', version: '0.5.1' },
     appCapabilities: { availableDisplayModes: ['inline', 'fullscreen'] }, protocolVersion: PROTOCOL })
     .then(function (r) {
       ready = true;
