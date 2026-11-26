@@ -279,11 +279,15 @@ svg { display: block; width: 100%; height: 100% }
   function layout() {
     pos = {};
     var leaf = 0;
-    (function place(id, depth) {
+    function place(id, depth) {
       var k = childrenOf(id).map(function (n) { return n.id; });
       k.forEach(function (c) { place(c, depth + 1); });
       pos[id] = { x: k.length ? (pos[k[0]].x + pos[k[k.length - 1]].x) / 2 : (leaf++) * GAP_X, y: depth * GAP_Y };
-    })(ROOT, 0);
+    }
+    // The "Start" box only shows an empty tree: once there is a first exchange, it is left out and the first
+    // boxes take its place (several boxes side by side when new subjects start from the root)
+    if (tree.nodes.length > 1 && !(byId(ROOT) || {}).q) childrenOf(ROOT).forEach(function (n) { place(n.id, 0); });
+    else place(ROOT, 0);
   }
   function render() {
     layout();
@@ -474,7 +478,7 @@ svg { display: block; width: 100%; height: 100% }
   window.addEventListener('resize', function () { if (tree) fit(); });
 
   // ---------- Start ----------
-  request('ui/initialize', { appInfo: { name: 'Ramifai tree', version: '0.5.1' },
+  request('ui/initialize', { appInfo: { name: 'Ramifai tree', version: '0.5.2' },
     appCapabilities: { availableDisplayModes: ['inline', 'fullscreen'] }, protocolVersion: PROTOCOL })
     .then(function (r) {
       ready = true;

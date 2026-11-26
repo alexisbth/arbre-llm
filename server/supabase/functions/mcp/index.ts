@@ -23,7 +23,7 @@ import { z } from 'npm:zod@4';
 import * as tree from './tree.ts';
 import { VIEW_HTML } from './view.ts';
 
-const VERSION = '0.5.1';
+const VERSION = '0.5.2';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const PUBLIC_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;          // public key: only lets requests reach the API
 const RESOURCE = `${SUPABASE_URL}/functions/v1/mcp`;            // this connector's public address
