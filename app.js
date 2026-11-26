@@ -52,25 +52,32 @@
   //   model list: keep / skip filter that list (to drop models that cannot chat), pinned stays at its top,
   //   prefer picks the default in it when the current model is not offered (models get renamed often).
   // label / note: keys of texts in UI. cardModel: smaller model for the node card and the translation.
+  // keyUrl: page where the user creates a key. keyPattern: how its keys begin, to recognize a key pasted under
+  //   another provider.
   const PROVIDERS = {
     anthropic: { name: 'Claude', format: 'anthropic', base: 'https://api.anthropic.com/v1', placeholder: 'sk-ant-…',
+      keyUrl: 'https://console.anthropic.com/settings/keys', keyPattern: /^sk-ant-/,
       label: 'providerAnthropic', note: 'noteAnthropic',
       models: ['claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-opus-5-5'],
       modelLabels: { 'claude-sonnet-5-5': 'modelSonnet', 'claude-haiku-5-5': 'modelHaiku', 'claude-opus-5-5': 'modelOpus' },
       cardModel: 'claude-haiku-5-5' },
     gemini: { name: 'Gemini', format: 'gemini', base: 'https://generativelanguage.googleapis.com/v1beta', placeholder: 'AIza…',
+      keyUrl: 'https://aistudio.google.com/apikey', keyPattern: /^AIza/,
       label: 'providerGemini', note: 'noteGemini', list: true,
       models: ['gemini-flash-latest', 'gemini-flash-lite-latest'],
       keep: /^gemini/, skip: /tts|image|live|audio|embed|transcribe|translate|omni|robotics|computer|research/,
       prefer: [/^gemini-flash-latest$/, /^gemini-[\d.]+-flash$/] },
     groq: { name: 'Groq', format: 'openai', base: 'https://api.groq.com/openai/v1', placeholder: 'gsk_…',
+      keyUrl: 'https://console.groq.com/keys', keyPattern: /^gsk_/,
       label: 'providerGroq', note: 'noteGroq', list: true,
       models: ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile'],
       skip: /whisper|tts|guard|orpheus|playai|compound/, prefer: [/gpt-oss-120b/, /llama-3\.3-70b/] },
     openrouter: { name: 'OpenRouter', format: 'openai', base: 'https://openrouter.ai/api/v1', placeholder: 'sk-or-…',
+      keyUrl: 'https://openrouter.ai/settings/keys', keyPattern: /^sk-or-/,
       label: 'providerOpenrouter', note: 'noteOpenrouter', list: true,
       models: ['openrouter/free'], pinned: ['openrouter/free'], keep: /:free$/ },
     openai: { name: 'ChatGPT', format: 'openai', base: 'https://api.openai.com/v1', placeholder: 'sk-…',
+      keyUrl: 'https://platform.openai.com/api-keys', keyPattern: /^sk-(?!ant-|or-)/,
       label: 'providerOpenai', note: 'noteOpenai', list: true,
       models: ['gpt-5-mini'], keep: /^(gpt|o\d)/,
       skip: /audio|realtime|tts|transcribe|image|embed|search|moderation|codex|instruct|\d{4}-\d\d-\d\d/,
@@ -131,15 +138,16 @@
     keepKey: 'Keep the key on this device',
     keyNote: 'The key stays on this device and is only sent to {host}. If the box above is unticked, ' +
       'the key is forgotten when the app closes.',
-    providerAnthropic: 'Claude (Anthropic) · paid', providerGemini: 'Gemini (Google) · free tier',
-    providerGroq: 'Groq (open models) · free tier', providerOpenrouter: 'OpenRouter · free models',
+    providerAnthropic: 'Claude (Anthropic) · paid', providerGemini: 'Gemini (Google) · free key',
+    providerGroq: 'Groq (open models) · free key', providerOpenrouter: 'OpenRouter · free key and models',
+    getKey: 'Get a key at {host} ↗',
     providerOpenai: 'ChatGPT (OpenAI) · paid',
     noteAnthropic: 'Paid: buy credits in the Claude Console (platform.claude.com), create the key there and set a spending limit.',
     noteGemini: 'Free tier: create the key at aistudio.google.com. On the free tier, Google may use your conversations ' +
       'to improve its products.',
     noteGroq: 'Free tier, no card needed: create the key at console.groq.com. Beyond the free limits, requests are refused, not billed.',
     noteOpenrouter: 'Free models: create the key at openrouter.ai. The model openrouter/free picks a free model for you. ' +
-      'About 50 free requests a day; each question uses 2.',
+      'About 50 free requests a day; a question uses 1 to 3 of them, depending on “New questions” below.',
     noteOpenai: 'Paid: buy credits at platform.openai.com and create the key there. ChatGPT Pro and Business include monthly API credits.',
     placement: 'New questions', placementAccurate: 'Placed automatically · accurate (3 requests per question)',
     placementEconomical: 'Placed automatically · economical (1 request per question)',
@@ -169,13 +177,13 @@
     restartQuestion: 'Restart of “{keyword}” in a new conversation',
     restartSummary: 'New conversation starting from the summary of “{keyword}”.',
     restartDone: 'New conversation created from the summary',
-    demoAnswer: 'Demo mode: simulated answer to “{question}”.\nFor real answers, choose an AI provider in ⋯ → Settings ' +
-      'and paste its key (some are free).',
+    demoAnswer: 'Demo mode: simulated answer to “{question}”.\nNo key for {provider} on this device, so no AI was asked. ' +
+      'Even the free tiers need a key: get one at {url}, then paste it in ⋯ → Settings.',
     questionSummary: 'Question: {question}', interrupted: 'Answer interrupted.', llmError: 'The LLM returned an error',
     emptyAnswer: 'The model returned an empty answer.',
     apiKeyRejected: 'API key rejected: check it in the settings',
     quotaReached: 'quota reached: wait a little or switch provider in the settings', connected: '{provider} is connected',
-    demoOn: 'Demo mode: simulated answers', copyRefused: 'Copy refused by the browser',
+    noKey: 'No key for {provider}: answers stay simulated', copyRefused: 'Copy refused by the browser',
     synthesis: 'Synthesis', synthesisTitle: 'Synthesis of the tree', writingSynthesis: 'Writing the synthesis…',
     localSynthesisNote: 'Automatic summary (the AI could not be reached): the summaries of the boxes, put end to end.',
     whereWeAre: 'Where we are', treeOutline: 'Tree', copy: 'Copy', copiedText: 'Copied', newBranch: 'New branch from it',
@@ -938,7 +946,7 @@
     if (selection === n.id) fillPanel();
     if (!use.key) {
       setTimeout(() => {
-        Object.assign(n, { pending: false, a: t('demoAnswer', { question: n.q }) });
+        Object.assign(n, { pending: false, a: t('demoAnswer', { question: n.q, provider: use.p.name, url: use.p.keyUrl }) });
         saveVersion(n);
         saveState();
         if (selection === n.id) fillPanel();
@@ -1382,7 +1390,7 @@
   // ---------- LLM settings (keys kept on the device only) ----------
   function loadSettings() {
     const s = readJson(SETTINGS_KEY) || {};
-    const out = { provider: DEFAULT_PROVIDER, keys: {}, models: {}, workspace: '', keep: false, language: '', placement: PLACEMENTS[0], ...s };
+    const out = { provider: DEFAULT_PROVIDER, keys: {}, models: {}, workspace: '', keep: true, language: '', placement: PLACEMENTS[0], ...s };
     if (s.key) out.keys.anthropic = s.key;      // settings saved by v4, when Claude was the only provider
     if (s.model) out.models.anthropic = s.model;
     delete out.key;
@@ -1433,6 +1441,8 @@
     $('set-model').value = draft.models[shown] || p.models[0];
     $('provider-note').textContent = t(p.note);
     $('key-note').textContent = t('keyNote', { host: new URL(p.base).host });
+    $('key-link').href = p.keyUrl;
+    $('key-link').textContent = t('getKey', { host: new URL(p.keyUrl).host });
     $('workspace-field').hidden = p.format !== 'anthropic';
     fillModelList(p, p.models);
     loadModels(shown);
@@ -1494,12 +1504,22 @@
     showProvider();
   });
   $('set-key').addEventListener('change', () => { keepDraft(); loadModels(shown); });
+  // A key pasted while another provider is shown goes to the provider its prefix belongs to
+  const keyOwner = key => Object.keys(PROVIDERS).find(id => PROVIDERS[id].keyPattern.test(key));
+  $('set-key').addEventListener('input', () => {
+    const key = $('set-key').value.trim(), owner = keyOwner(key);
+    if (!owner || owner === shown) return;
+    draft.keys[owner] = key;
+    shown = owner;
+    $('set-provider').value = owner;
+    showProvider();
+  });
   $('settings-form').addEventListener('submit', e => {
     e.preventDefault();
     readSettingsForm();
     $('settings').close();
     applyStaticTexts();
-    toast(apiKey() ? t('connected', { provider: provider().name }) : t('demoOn'));
+    toast(t(apiKey() ? 'connected' : 'noKey', { provider: provider().name }));
     changeLanguage(false);                      // translates only if this language is not on the device yet
   });
   $('btn-retranslate').addEventListener('click', () => {
