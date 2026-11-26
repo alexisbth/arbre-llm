@@ -23,7 +23,8 @@
   <button id="btn-cancel" class="in-select" type="button" data-i18n="cancel">Cancel</button>
   <div id="menu" hidden>
     <button id="btn-settings" type="button" data-i18n="settingsMenu">Settings</button>
-    <button id="btn-export" type="button" data-i18n="exportJson">Copy as JSON</button>
+    <button id="btn-synthesis" type="button" data-i18n="synthesis">Synthesis</button>
+    <button id="btn-export" type="button" data-i18n="exportMenu">Export</button>
     <button id="btn-reset" type="button" data-i18n="reset">Reset</button>
   </div>
 </header>
@@ -42,7 +43,7 @@
 
 <section id="panel" class="collapsed">
   <div id="corner">
-    <button id="btn-restart" type="button" hidden data-i18n="restartFromSummary">Restart from summary</button>
+    <button id="btn-restart" type="button" hidden data-i18n="synthesis">Synthesis</button>
     <button id="gauges" type="button" data-i18n-aria="gaugesLabel" aria-label="Tokens used. Tap to change the model's context size.">
       <span class="gauge" id="gauge-path"><span data-i18n="gaugePath">Path</span><span class="bar"><i></i></span><span class="value"></span></span>
       <span class="gauge" id="gauge-tree"><span data-i18n="gaugeTree">Tree</span><span class="bar"><i></i></span><span class="value"></span></span>
@@ -60,6 +61,7 @@
     <div id="thread" role="tabpanel"></div>
     <div id="context" role="tabpanel" hidden></div>
   </div>
+  <button id="where" type="button"></button>
   <form id="ask-form">
     <textarea id="question" rows="1" dir="auto" data-i18n-aria="questionLabel" aria-label="New question"></textarea>
     <button type="submit" data-i18n="send">Send</button>
@@ -86,6 +88,10 @@
     </label>
     <label class="check"><input id="set-keep" type="checkbox"> <span data-i18n="keepKey">Keep the key on this device</span></label>
     <p class="note" id="key-note"></p>
+    <label><span data-i18n="placement">New questions</span>
+      <select id="set-placement"></select>
+    </label>
+    <p class="note" data-i18n="placementNote"></p>
     <label><span data-i18n="language">Interface language</span>
       <input id="set-language" type="text" list="languages" autocomplete="off" spellcheck="false" placeholder="English">
     </label>
@@ -105,7 +111,16 @@
   </form>
 </dialog>
 
+<dialog id="sheet" aria-labelledby="sheet-title">
+  <h2 id="sheet-title"></h2>
+  <p id="sheet-text" class="note"></p>
+  <pre id="sheet-body" hidden></pre>
+  <div id="sheet-actions" class="actions"></div>
+</dialog>
+
 <div id="toast" role="status" aria-live="polite"></div>
+<div id="snack" role="status" aria-live="polite"><span></span><button type="button"></button></div>
+<div id="print-view"></div>
 
 <script src="app.js"></script>
 </body>

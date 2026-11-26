@@ -51,6 +51,8 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid var(--acc); ou
 .in-select { display: none }
 body.select-mode #topbar .outside-select { display: none }
 body.select-mode #topbar .in-select { display: inline-block }
+body.move-mode #topbar #btn-merge { display: none }
+body.move-mode #topbar #btn-fit { display: inline-block }   /* to find the new parent */
 #menu {
   position: absolute; top: 100%; inset-inline-end: 12px; margin-top: 6px; padding: 8px;
   display: grid; gap: 6px; background: var(--bg);
@@ -131,6 +133,16 @@ body.select-mode #topbar .in-select { display: inline-block }
 [dir="rtl"] .follow-up .fan { transform: scaleX(-1) }   /* ↙ and ↘ swap sides in right-to-left languages */
 .follow-up button, .retry { font-size: 14px }
 .retry { margin-top: 8px }
+/* Under the current answer: versions ‹ 1/2 ›, regenerate, merge, move */
+.tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px }
+.tools button { min-height: 36px; padding: 0 10px; font-size: 13px }
+.tools .version { font-size: 13px; color: var(--slate) }
+/* 📍 where the next question goes */
+#where {
+  flex: none; align-self: flex-start; max-width: 100%; min-height: 32px; margin: 4px 0 6px; padding: 0 12px;
+  font-size: 13px; color: var(--slate); border-style: dashed; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#where:disabled { cursor: default; border-color: transparent; padding-inline-start: 0 }
 
 #context h3 { margin: 14px 0 6px; font-size: 15px }
 #context ul { margin: 0; padding-inline-start: 20px }
@@ -196,6 +208,32 @@ button.primary { background: var(--ink); color: var(--bg); border-color: var(--i
   opacity: 0; transform: translate(-50%, -8px); transition: opacity .2s, transform .2s; pointer-events: none;
 }
 #toast.on { opacity: 1; transform: translate(-50%, 0) }
+#snack {
+  position: fixed; left: 50%; top: calc(env(safe-area-inset-top) + 120px); z-index: 5;
+  display: flex; align-items: center; gap: 10px; max-width: 92vw; padding: 6px 6px 6px 14px;
+  border-radius: 24px; background: var(--ink); color: var(--bg); font-size: 14px;
+  opacity: 0; visibility: hidden; transform: translate(-50%, -8px); transition: opacity .2s, transform .2s;
+}
+#snack.on { opacity: 1; visibility: visible; transform: translate(-50%, 0) }
+#snack button { min-height: 36px; background: var(--acc); color: var(--acc-ink); border-color: var(--acc); font-weight: 700 }
+#sheet-body {
+  max-height: 50vh; overflow: auto; margin: 10px 0 0; padding: 10px 12px; border-radius: 12px; background: var(--card);
+  font: inherit; font-size: 14px; white-space: pre-wrap; unicode-bidi: plaintext;
+}
+#sheet-text[hidden] { display: none }
+#print-view { display: none }
+/* PDF export: only the report is printed */
+@media print {
+  html, body { height: auto; overflow: visible; background: #fff; color: #101418 }
+  body > :not(#print-view) { display: none !important }
+  #print-view { display: block }
+  .report .map { display: block; width: 100%; height: auto; max-height: 45vh; margin: 0 0 16px }
+  .report details { margin: 8px 0; padding-inline-start: 14px; border-inline-start: 3px solid #d3d9df }
+  .report summary { font-weight: 800; list-style: none }
+  .report .q { margin: 6px 0 2px; font-weight: 650 }
+  .report .a { margin: 0 0 6px; white-space: pre-wrap }
+  .report .version { margin: 8px 0 2px; font-size: 13px; font-style: italic; color: #5d6873 }
+}
 
 /* Large screen: panel fixed on the right, always open (the map stays on the left in every language) */
 @media (min-width: 900px) {
@@ -209,4 +247,4 @@ button.primary { background: var(--ink); color: var(--bg); border-color: var(--i
   #topbar { right: 420px }
   #corner { position: fixed; inset-inline-end: auto; right: 436px; bottom: 16px; margin: 0 }
 }
-@media (prefers-reduced-motion: reduce) { #toast { transition: none } }
+@media (prefers-reduced-motion: reduce) { #toast, #snack { transition: none } }

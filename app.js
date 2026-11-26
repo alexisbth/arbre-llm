@@ -1,4 +1,4 @@
-/* Ramifai — proof of concept (POC), v5
+/* Ramifai — proof of concept (POC), v6
  *
  * Overall approach
  * 1. Data: a flat list of nodes { id, parent, q, a, kw, sum, ico }.
@@ -14,6 +14,9 @@
  *    tier) and pastes its key, kept on the device. The question is sent with the compact context;
  *    the answer streams in, then the LLM fills in the node's card (keyword, emoji, summary).
  *    Without a key: simulated answers (demo mode).
+ *    Each answer can be regenerated (with any provider) or merged: a node keeps all its versions.
+ *    Placement: the app can choose by itself which box a new question follows from.
+ *    Synthesis of the tree (written by the LLM, or the summaries put end to end) and exports.
  * 8. Interface language: the English texts (UI) are translated by the LLM into the chosen
  *    language, checked, then kept on the device. Right-to-left languages mirror the layout.
  * Security: all text is inserted with textContent (never innerHTML), no third-party script.
@@ -80,19 +83,47 @@
   const MAX_TOKENS_ANSWER = 4096;
   const MAX_TOKENS_CARD = 300;
   const MAX_TOKENS_TRANSLATION = 6000;
+  const MAX_TOKENS_ROUTE = 200;
+  const MAX_TOKENS_SYNTHESIS = 2000;
+  const MAX_INDEX = 120;               // boxes listed at most in the tree index sent to the LLM
+  const BREADCRUMB_DEPTH = 2;          // keywords shown in the 📍 marker
+  const SNACK_DURATION = 6000;         // ms
+  const DOWNLOAD_DELAY = 1000;         // ms before a download link is released
+  const MD_MAX_LEVEL = 6;              // deepest Markdown heading
+  const MAP_MARGIN = 20;               // px around the tree drawn in exports
+  const LIMIT_STATUSES = [402, 429];   // HTTP codes meaning "quota or credits used up"
+  const VERSION_FIELDS = ['a', 'kw', 'sum', 'ico', 'usage', 'by', 'error'];   // fields that change from one version to another
+  const PLACEMENTS = ['accurate', 'economical', 'off'];   // the first one is the default
+  const TRAILER_START = '<<<{';        // economical mode: start of the line where the LLM places the box
+  const APP_NAME = 'Ramifai';
+  const EXPORT_VERSION = 4;
+  const EXPORT_INK = '#101418', EXPORT_PAPER = '#ffffff', EXPORT_LINE = '#5d6873';
+  const EXPORT_CSS = 'body{margin:0 auto;max-width:860px;padding:16px;font:16px/1.5 system-ui,sans-serif;color:#101418}' +
+    '.map{display:block;width:100%;height:auto;margin:12px 0 20px}' +
+    'details{margin:8px 0;padding-inline-start:14px;border-inline-start:3px solid #d3d9df}' +
+    'summary{font-weight:800;cursor:pointer}.q{font-weight:650;margin:6px 0 2px}.a{white-space:pre-wrap;margin:0 0 6px}' +
+    '.version{font-size:13px;font-style:italic;color:#5d6873;margin:8px 0 2px}.a,.q,summary{unicode-bidi:plaintext}';
   const CARD_INPUT_LENGTH = 6000;      // characters of the answer sent to build the card
   const LLM_KEYWORD_LENGTH = 30;       // characters kept for an LLM-generated keyword
   const SETTINGS_KEY = 'arbre-llm-settings';
   const TRANSLATIONS_KEY = 'arbre-llm-translations';
   const INSTRUCTION = 'You are answering inside a tree-shaped conversation app. Answer in the language of the question, ' +
     'in plain text, without Markdown or LaTeX: write formulas in a readable notation (Unicode) and define every notation.';
+  const MERGE_INSTRUCTION = 'Here are several answers already given to this question. Write one answer that combines ' +
+    'their best points, removes repetitions and points out where they disagree.';
+  const ECONOMY_INSTRUCTION = 'After your answer, add one last line in exactly this form, with nothing after it: ' +
+    '<<<{"parent": "id of the box this message follows from: the current box to continue, an earlier box to go back to its topic, ' +
+    'or root for a new topic", "keyword": "1 to 3 words", "emoji": "one emoji, or empty", "summary": "25 words at most"}>>>';
+  const SYNTHESIS_INSTRUCTION = 'Write a synthesis of this conversation tree so that the user, or another AI, can carry on ' +
+    'from where the user is. Parts: goal; what has been explored, branch by branch; key conclusions and decisions; ' +
+    'where the user is now; open questions. Plain text with dashes for lists, no other Markdown, in the language of ' +
+    'the conversation, 400 words at most.';
 
   // ---------- Interface texts (English reference, translated by the LLM on demand) ----------
   // {name} marks a value inserted by the code; a translation must keep exactly the same ones.
   const UI = {
     select: 'Select', fit: 'Fit', moreActions: 'More actions', merge: 'Merge ({count})', cancel: 'Cancel',
-    settingsMenu: 'Settings', exportJson: 'Copy as JSON', reset: 'Reset', confirmReset: 'Confirm?',
-    mapLabel: 'Conversation map', restartFromSummary: 'Restart from summary',
+    settingsMenu: 'Settings', reset: 'Reset', confirmReset: 'Confirm?', mapLabel: 'Conversation map',
     gaugesLabel: "Tokens used. Tap to change the model's context size.", gaugePath: 'Path', gaugeTree: 'Tree',
     tabThread: 'Thread', tabContext: 'LLM context', questionLabel: 'New question', send: 'Send',
     settingsTitle: 'Settings', settingsDemoNote: 'Without a key, the app stays in demo mode (simulated answers).',
@@ -110,6 +141,11 @@
     noteOpenrouter: 'Free models: create the key at openrouter.ai. The model openrouter/free picks a free model for you. ' +
       'About 50 free requests a day; each question uses 2.',
     noteOpenai: 'Paid: buy credits at platform.openai.com and create the key there. ChatGPT Pro and Business include monthly API credits.',
+    placement: 'New questions', placementAccurate: 'Placed automatically · accurate (3 requests per question)',
+    placementEconomical: 'Placed automatically · economical (1 request per question)',
+    placementOff: 'Always where I am (2 requests per question)',
+    placementNote: 'Automatic: just write, the app finds the right box in the tree. Tap 📍 above the question box ' +
+      'to keep the next question where you are.',
     language: 'Interface language',
     languageNote: 'Translated by the AI the first time (an API key is needed), then kept on this device.',
     retranslate: 'Retranslate', clearKey: 'Clear key', close: 'Close', save: 'Save',
@@ -118,7 +154,12 @@
     pickTwo: 'Pick at least two boxes.', merged: '{count} boxes merged. Tap the box to expand it.', expanded: 'Box expanded',
     rootSummary: 'Ask a first question to start a new branch.', placeholder: 'After “{keyword}”…',
     noExchange: 'No exchange on this path yet.', retry: 'Retry',
-    answering: 'Answer in progress…', nothingToSend: 'Nothing to send: a question asked here goes without context.',
+    answering: 'Answer in progress…', placing: 'Finding where this question belongs…',
+    regenerate: 'Regenerate', regenerateWith: 'Regenerate with:', mergeVersions: 'Merge versions', move: 'Move',
+    previous: 'Previous version', next: 'Next version', versionOf: '{index}/{count}',
+    auto: 'automatic', fixed: 'fixed here', placedUnder: 'Placed under “{keyword}”', moveHint: 'Tap the new parent box',
+    moved: 'Moved under “{keyword}”', cannotMove: 'Not possible: pick a box outside this branch.',
+    nothingToSend: 'Nothing to send: a question asked here goes without context.',
     tokensApprox: '≈ {count} tokens',
     contextStat: 'sent to the LLM for a question asked here, versus ≈ {full} tokens for the whole path in full (exchanges: {count}).',
     earlierSteps: 'Earlier steps: summary only', lastExchanges: 'Last exchanges: in full',
@@ -134,7 +175,15 @@
     emptyAnswer: 'The model returned an empty answer.',
     apiKeyRejected: 'API key rejected: check it in the settings',
     quotaReached: 'quota reached: wait a little or switch provider in the settings', connected: '{provider} is connected',
-    demoOn: 'Demo mode: simulated answers', copied: 'Tree copied as JSON', copyRefused: 'Copy refused by the browser',
+    demoOn: 'Demo mode: simulated answers', copyRefused: 'Copy refused by the browser',
+    synthesis: 'Synthesis', synthesisTitle: 'Synthesis of the tree', writingSynthesis: 'Writing the synthesis…',
+    localSynthesisNote: 'Automatic summary (the AI could not be reached): the summaries of the boxes, put end to end.',
+    whereWeAre: 'Where we are', treeOutline: 'Tree', copy: 'Copy', copiedText: 'Copied', newBranch: 'New branch from it',
+    limitTitle: 'Limit reached',
+    limitText: '{provider} refuses new requests for now (quota or credits used up). You can continue with another ' +
+      'provider, or copy the synthesis to use it elsewhere.',
+    continueWith: 'Continue with {provider}', exportMenu: 'Export', exportTitle: 'Export the tree',
+    exportNote: 'PDF: choose “Save as PDF” in the print window.', otherVersion: 'Other version ({by})',
     resetDone: 'Example tree restored', translating: 'Translating the interface…', translated: 'Interface translated',
     translationNeedsKey: 'Translation needs an API key: the interface stays in English.',
     translationFailed: 'Translation failed: the interface stays in English.',
@@ -232,7 +281,9 @@
     document.querySelectorAll('[data-i18n]').forEach(e => { e.textContent = t(e.dataset.i18n); });
     document.querySelectorAll('[data-i18n-aria]').forEach(e => e.setAttribute('aria-label', t(e.dataset.i18nAria)));
     for (const o of $('set-provider').options) o.textContent = t(PROVIDERS[o.value].label);
-    $('subtitle').textContent = modeSelect ? t('selectHint') : modeLabel();
+    for (const o of $('set-placement').options) o.textContent = t(placementLabel(o.value));
+    $('subtitle').textContent = moving ? t('moveHint') : modeSelect ? t('selectHint') : modeLabel();
+    fillWhere();
     $('btn-merge').textContent = t('merge', { count: completeGroup().size });
   }
   function applyLanguage() {
@@ -265,9 +316,9 @@
       'Keep them short, natural and consistent with each other. Keep every placeholder in curly braces exactly as is ' +
       '(for example {count}), keep the line breaks, and keep product names, technical names and web addresses unchanged ' +
       '(Ramifai, Claude, Anthropic, Claude Console, Sonnet, Haiku, Opus, Gemini, Google, Groq, OpenRouter, ChatGPT, OpenAI, ' +
-      'openrouter/free, platform.claude.com, JSON, LLM, API, POC).\n\n' +
+      'openrouter/free, platform.claude.com, JSON, LLM, API, POC, HTML, PDF, Markdown, OPML), and keep emojis such as 📍.\n\n' +
       JSON.stringify(UI, null, 1);
-    const out = await structured(tool, prompt, MAX_TOKENS_TRANSLATION);
+    const out = await structured(using(settings.provider), tool, prompt, MAX_TOKENS_TRANSLATION);
     if (!out || typeof out.texts !== 'object' || !out.texts) throw new Error('empty translation');
     const checked = {};
     for (const k of keys) {                     // a text that lost or gained a {value} falls back to English
@@ -310,9 +361,13 @@
   let groups = state.groups || [];             // [{ id, members: [ids of the merged nodes] }]
   let contextWindow = WINDOWS.includes(state.window) ? state.window : WINDOWS[0];
   for (const n of nodes) {                     // answer cut off because the app was closed
-    if (n.pending) Object.assign(n, { pending: false, error: true, a: n.a || UI.interrupted });
+    if (n.pending || n.placing) Object.assign(n, { pending: false, error: true, a: n.a || UI.interrupted });
+    delete n.placing;
   }
   let modeSelect = false;
+  let moving = null;                           // box being moved: the next tapped box becomes its parent
+  let pinned = false;                          // the user chose the box: the next question goes there, unplaced
+  let regenChoice = null;                      // box whose "Regenerate with" choice is open
   const ticked = new Set();                    // boxes tapped in selection mode
   const view = { x: 0, y: 0, k: 1 };           // translation (x, y) and scale k of the map
   let V, P;                                    // visible tree and positions, recomputed on every draw
@@ -330,9 +385,9 @@
   if (!node(selection)) selection = ROOT;
 
   // Visible tree: each node belongs to a box (itself, or the group that contains it)
-  function visibleTree() {
+  function visibleTree(groupList = groups) {
     const groupOf = {};
-    for (const g of groups) for (const m of g.members) groupOf[m] = g;
+    for (const g of groupList) for (const m of g.members) groupOf[m] = g;
     const unit = id => (groupOf[id] ? groupOf[id].id : id);
     const units = new Map();                   // box id → { id, rep, group, parent }
     for (const n of nodes) {
@@ -371,11 +426,9 @@
     const links = [...V.units.values()].filter(u => u.parent != null)
       .sort((a, b) => onPath.has(a.id) - onPath.has(b.id));
     for (const u of links) {
-      const a = P[u.parent], b = P[u.id];
-      const y0 = a.y + NODE_HEIGHT / 2, y1 = b.y - NODE_HEIGHT / 2 - ARROW_GAP, my = (y0 + y1) / 2;
       const active = onPath.has(u.id);
       layer.append(svgEl('path', {
-        d: `M${a.x},${y0} C${a.x},${my} ${b.x},${my} ${b.x},${y1}`,
+        d: linkPath(P[u.parent], P[u.id]),
         class: active ? 'link active' : 'link',
         'marker-end': active ? 'url(#arrow-active)' : 'url(#arrow)',
       }));
@@ -408,6 +461,10 @@
     }
     applyView();
     fillPanel();
+  }
+  function linkPath(a, b) {                    // curve from a parent box down to its child's box
+    const y0 = a.y + NODE_HEIGHT / 2, y1 = b.y - NODE_HEIGHT / 2 - ARROW_GAP, my = (y0 + y1) / 2;
+    return `M${a.x},${y0} C${a.x},${my} ${b.x},${my} ${b.x},${y1}`;
   }
   function applyView() {
     $('layer').setAttribute('transform', `translate(${view.x},${view.y}) scale(${view.k})`);
@@ -508,6 +565,7 @@
   function tap(unitId) {
     const u = V.units.get(unitId);
     if (!u) return;
+    if (moving) { moveTo(u.group ? u.rep.id : u.id); return; }
     if (modeSelect) {
       const ids = u.group ? u.group.members : [u.id];
       const allTicked = ids.every(i => ticked.has(i));
@@ -517,6 +575,7 @@
       return;
     }
     if (u.group) { expand(u.group.id); return; }
+    pinned = true;
     select(u.id, false);
   }
 
@@ -568,6 +627,31 @@
     toast(t('expanded'));
   }
 
+  // ---------- Moving a box (and its branch) under another parent ----------
+  function startMove(id) {
+    moving = id;
+    document.body.classList.add('select-mode', 'move-mode');
+    $('panel').classList.add('collapsed');
+    $('handle').setAttribute('aria-expanded', 'false');
+    applyStaticTexts();
+  }
+  function endMove() {
+    moving = null;
+    document.body.classList.remove('select-mode', 'move-mode');
+    applyStaticTexts();
+  }
+  function moveTo(targetId) {
+    const n = node(moving);
+    if (!n || path(targetId).some(m => m.id === n.id)) { toast(t('cannotMove')); return; }
+    const branch = new Set(nodes.filter(m => path(m.id).some(a => a.id === n.id)).map(m => m.id));
+    groups = groups.filter(g => !g.members.some(m => branch.has(m)));   // a merged box touching the branch is expanded
+    n.parent = targetId;
+    n.pv = node(targetId).v;
+    endMove();
+    select(n.id, true);
+    toast(t('moved', { keyword: keyword(node(targetId)) }));
+  }
+
   // ---------- Panel: thread, context, gauges ----------
   function fillPanel() {
     const n = node(selection);
@@ -590,6 +674,7 @@
         b.dataset.retry = m.id;
         block.append(b);
       }
+      if (m.id === selection && !m.pending && !m.placing) block.append(...tools(m));
       thread.append(block);
     });
     // Follow-ups already explored from here: one arrow fanning out to each of them, above its button
@@ -607,13 +692,74 @@
       thread.append(d);
     }
     requestAnimationFrame(() => thread.querySelector('.current')?.scrollIntoView({ block: 'nearest' }));
-    fillContext(p);
+    fillContext(contextPath(selection));
     fillGauges(p);
+    fillWhere();
   }
+
+  // Buttons under the current answer: versions, regenerate, merge, move
+  function tools(m) {
+    const button = (row, act, text, extra = {}) => {
+      const b = htmlEl('button', null, text);
+      b.type = 'button';
+      b.dataset.act = act;
+      Object.assign(b.dataset, extra.data || {});
+      if (extra.aria) b.setAttribute('aria-label', extra.aria);
+      row.append(b);
+    };
+    const row = htmlEl('div', 'tools'), count = m.versions?.length || 1;
+    if (count > 1) {
+      button(row, 'prev', '‹', { aria: t('previous') });
+      row.append(htmlEl('span', 'version', t('versionOf', { index: m.v + 1, count }) + (m.by ? ' · ' + m.by : '')));
+      button(row, 'next', '›', { aria: t('next') });
+    }
+    button(row, 'regen', '↻ ' + t('regenerate'));
+    if (count > 1) button(row, 'merge', '⇄ ' + t('mergeVersions'));
+    button(row, 'move', '↗ ' + t('move'));
+    if (regenChoice !== m.id) return [row];
+    const choice = htmlEl('div', 'tools');
+    choice.append(htmlEl('span', 'version', t('regenerateWith')));
+    for (const id of readyProviders()) button(choice, 'regen-with', PROVIDERS[id].name, { data: { provider: id } });
+    return [row, choice];
+  }
+  const readyProviders = () => Object.keys(PROVIDERS).filter(id => settings.keys[id]);
+  function toolAction(act, pid) {
+    const n = node(selection);
+    if (act === 'prev' || act === 'next') {
+      const count = n.versions.length;
+      showVersion(n, (n.v + (act === 'next' ? 1 : count - 1)) % count);
+      saveState();
+      draw();
+      return;
+    }
+    if (act === 'regen' && readyProviders().length > 1) {    // several providers: choose which one
+      regenChoice = regenChoice === n.id ? null : n.id;
+      fillPanel();
+      return;
+    }
+    if (act === 'regen' || act === 'regen-with') {
+      regenChoice = null;
+      addVersion(n);
+      answer(n, { pid: pid || settings.provider });
+    } else if (act === 'merge') {
+      addVersion(n);
+      answer(n, { merge: true });
+    } else if (act === 'move') startMove(n.id);
+  }
+
+  // 📍 marker above the question box: where the next question goes, and whether the app may place it elsewhere
+  const autoPlacement = () => settings.placement !== 'off' && Boolean(apiKey());
+  function fillWhere() {
+    const crumb = path(selection).slice(-BREADCRUMB_DEPTH).map(keyword).join(' › ');
+    $('where').textContent = `📍 ${crumb}` + (autoPlacement() ? ` · ${t(pinned ? 'fixed' : 'auto')}` : '');
+    $('where').disabled = !autoPlacement();
+  }
+  $('where').addEventListener('click', () => { pinned = !pinned; fillWhere(); });
 
   // Left-most follow-up: ↙, right-most: ↘, the others: ↓ (mirrored by the style sheet in right-to-left languages)
   const fanArrow = (i, count) => (count === 1 || (i > 0 && i < count - 1) ? '↓' : i === 0 ? '↙' : '↘');
-  const answerText = n => n.a || (n.pending ? t('answering') : '');
+  // While an answer streams in, the economical mode's last line is hidden
+  const answerText = n => (n.pending ? n.a.split(TRAILER_START)[0] : n.a) || (n.placing ? t('placing') : n.pending ? t('answering') : '');
   const tokens = chars => Math.ceil(chars / CHARS_PER_TOKEN);
   const sum = (list, f) => list.reduce((s, n) => s + f(n), 0);
   const exchangeSize = n => n.q.length + n.a.length;
@@ -679,24 +825,16 @@
     toast(t('contextSize', { count: compactFormat().format(contextWindow) }));
   });
 
-  // Restart from the summary: a new conversation whose starting point is the path's summary
-  $('btn-restart').addEventListener('click', () => {
-    const origin = node(selection);
-    const p = path(selection).filter(m => m.id !== ROOT);
-    const n = { id: 'n' + newId(), parent: ROOT, ico: '♻️', kw: t('restartKeyword'),
-      q: t('restartQuestion', { keyword: keyword(origin) }),
-      a: p.map(m => `${label(m)}: ${m.sum}`).join('\n'),
-      sum: t('restartSummary', { keyword: keyword(origin) }) };
-    nodes.push(n);
-    select(n.id, true);
-    toast(t('restartDone'));
-  });
+  // Path almost full: the synthesis lets the user carry on in a new branch, or elsewhere
+  $('btn-restart').addEventListener('click', () => openSynthesis());
 
   $('thread').addEventListener('click', e => {
+    const act = e.target.closest('[data-act]');
+    if (act) { toolAction(act.dataset.act, act.dataset.provider); return; }
     const r = e.target.closest('[data-retry]');
     if (r) { answer(node(r.dataset.retry)); return; }
     const c = e.target.closest('[data-id]');
-    if (c) select(c.dataset.id, true);
+    if (c) { pinned = true; select(c.dataset.id, true); }
   });
   $('handle').addEventListener('click', () => {
     const open = $('panel').classList.toggle('collapsed') === false;
@@ -738,55 +876,116 @@
       $('ask-form').requestSubmit();
     }
   });
-  $('ask-form').addEventListener('submit', e => {
+  $('ask-form').addEventListener('submit', async e => {
     e.preventDefault();
     const q = input.value.trim();
     if (!q) return;
-    // Temporary keyword, icon and summary, replaced by the LLM's card once the answer has arrived
-    const n = { id: 'n' + newId(), parent: selection, q, a: '',
+    // Temporary keyword, icon and summary, replaced by the LLM's card once the answer has arrived.
+    // pv: version of the parent box shown when the question was asked (its context).
+    const n = { id: 'n' + newId(), parent: selection, pv: node(selection).v, q, a: '',
       ico: guessIcon(q), kw: guessKeyword(q), sum: t('questionSummary', { question: shorten(q, SUMMARY_LENGTH) }) };
     nodes.push(n);
     input.value = '';
     input.style.height = '';
-    answer(n);
+    const auto = autoPlacement() && !pinned;
+    pinned = false;
+    if (auto && settings.placement === 'accurate' && nodes.length > 2) {   // a first request chooses the box
+      n.placing = true;
+      select(n.id, true);
+      await route(n);
+      delete n.placing;
+      draw();
+    }
+    answer(n, { economical: auto && settings.placement === 'economical' });
     select(n.id, true);
   });
 
+  // ---------- Versions of an answer ----------
+  // A node shows one version (its fields a, kw, sum, ico…); n.versions keeps them all and n.v is the one shown.
+  const pick = n => Object.fromEntries(VERSION_FIELDS.filter(k => n[k] !== undefined).map(k => [k, n[k]]));
+  function saveVersion(n) {
+    if (!n.versions) { n.versions = []; n.v = 0; }
+    n.versions[n.v] = pick(n);
+  }
+  function showVersion(n, i) {
+    saveVersion(n);
+    for (const k of VERSION_FIELDS) delete n[k];
+    n.v = i;
+    Object.assign(n, n.versions[i]);
+  }
+  function addVersion(n) {                     // new empty version; the keyword stays until its new card arrives
+    saveVersion(n);
+    const { kw, ico, sum } = n;
+    for (const k of VERSION_FIELDS) delete n[k];
+    n.versions.push({});
+    n.v = n.versions.length - 1;
+    Object.assign(n, { kw, ico, sum, a: '' });
+  }
+  const otherVersions = n => (n.versions || []).filter((v, i) => i !== n.v && v.a && !v.error);
+  // A box as its child saw it: the version shown when the child's question was asked
+  const seenBy = (m, child) => (child.pv != null && m.versions?.[child.pv] ? { ...m, ...m.versions[child.pv] } : m);
+  function contextPath(id, child = null) {     // path to a box, each box in the version its next question was asked from
+    const p = path(id).filter(m => m.id !== ROOT);
+    return p.map((m, i) => (p[i + 1] || child ? seenBy(m, p[i + 1] || child) : m));
+  }
+
   // ---------- Answer: the chosen LLM if a key is set, otherwise a simulated answer ----------
-  async function answer(n) {
+  // how.pid: provider to use; how.merge: combine the versions; how.economical: answer, place and card in one request
+  async function answer(n, how = {}) {
+    const use = using(how.pid || settings.provider);
     Object.assign(n, { pending: true, error: false, a: '' });
     delete n.usage;
     if (selection === n.id) fillPanel();
-    if (!apiKey()) {
+    if (!use.key) {
       setTimeout(() => {
         Object.assign(n, { pending: false, a: t('demoAnswer', { question: n.q }) });
+        saveVersion(n);
         saveState();
         if (selection === n.id) fillPanel();
       }, DEMO_DELAY);
       return;
     }
     try {
-      await askLLM(n);
-      n.pending = false;
+      const { system, messages } = how.merge ? mergeRequest(n) : buildRequest(n);
+      await askLLM(n, use, how.economical ? system + economyPrompt(n) : system, messages);
+      const trailer = how.economical ? takeTrailer(n) : null;
+      Object.assign(n, { pending: false, by: byLabel(use) });
+      saveVersion(n);
       saveState();
       if (selection === n.id) fillPanel();
-      try { await fillCard(n); } catch { /* card is optional: keep the temporary keyword */ }
+      if (trailer) {
+        applyCard(n, trailer);
+        placeAt(n, trailer.parent);
+      } else if (!how.economical) {
+        try { applyCard(n, await structured(use, CARD_TOOL, cardPrompt(n), MAX_TOKENS_CARD)); } catch { /* the card is optional */ }
+      }
     } catch (err) {
       Object.assign(n, { pending: false, error: true, a: '⚠️ ' + err.message });
       toast(t('llmError'));
+      if (LIMIT_STATUSES.includes(err.status)) openLimit(n, use.id);
     }
+    saveVersion(n);
     saveState();
     draw();
   }
 
   // ---------- LLM calls ----------
+  // use: { id, p: provider, key, model, light: smaller model for cards, placement and translation }
+  function using(pid) {
+    const p = PROVIDERS[pid], model = settings.models[pid] || p.models[0];
+    return { id: pid, p, key: settings.keys[pid] || '', model, light: p.cardModel || model };
+  }
   const provider = () => PROVIDERS[settings.provider];
   const apiKey = () => settings.keys[settings.provider] || '';
   const currentModel = () => settings.models[settings.provider] || provider().models[0];
-  const lightModel = () => provider().cardModel || currentModel();
+  const byLabel = use => `${use.p.name} · ${use.model.split('/').pop()}`;
   const cleanText = s => s.replace(/<think>[\s\S]*?<\/think>/g, '').trim();   // some open models show their reasoning
+  function parseObject(text) {                 // the JSON object in a text, ignoring what surrounds it
+    const i = text.indexOf('{'), j = text.lastIndexOf('}');
+    return i < 0 || j < i ? null : JSON.parse(text.slice(i, j + 1));
+  }
 
-  function headers(p = provider(), key = apiKey()) {
+  function headers({ p, key }) {
     const h = { 'content-type': 'application/json' };
     if (p.format === 'anthropic') {
       Object.assign(h, {
@@ -807,14 +1006,13 @@
       if (e?.message) msg += ': ' + e.message;
     } catch { /* unreadable body */ }
     if (r.status === 401 || r.status === 403) msg += ` (${t('apiKeyRejected')})`;
-    if (r.status === 429) msg += ` (${t('quotaReached')})`;
-    return new Error(msg);
+    if (LIMIT_STATUSES.includes(r.status)) msg += ` (${t('quotaReached')})`;
+    return Object.assign(new Error(msg), { status: r.status });
   }
 
-  // Address and body of a request, in the chosen provider's format.
-  // messages: [{ role: 'user' | 'assistant', content }]
-  function request(model, system, messages, { stream = false, maxTokens = MAX_TOKENS_ANSWER, json = false } = {}) {
-    const p = provider();
+  // Address and body of a request, in the provider's format. messages: [{ role: 'user' | 'assistant', content }]
+  function request(use, model, system, messages, { stream = false, maxTokens = MAX_TOKENS_ANSWER, json = false } = {}) {
+    const p = use.p;
     if (p.format === 'anthropic') return { url: `${p.base}/messages`, body: { model, max_tokens: maxTokens, stream, system, messages } };
     if (p.format === 'gemini') {
       const action = stream ? 'streamGenerateContent?alt=sse' : 'generateContent';
@@ -831,15 +1029,15 @@
   }
 
   // Text and token counts found in a response, or in one piece of a streamed response
-  function readPiece(d) {
+  function readPiece(format, d) {
     if (d.error) throw new Error(d.error.message || String(d.error));
-    const f = provider().format;
-    if (f === 'anthropic') return {
-      text: d.type === 'content_block_delta' && d.delta.type === 'text_delta' ? d.delta.text : '',
+    if (format === 'anthropic') return {
+      text: d.content ? d.content.filter(b => b.type === 'text').map(b => b.text).join('')
+        : d.type === 'content_block_delta' && d.delta.type === 'text_delta' ? d.delta.text : '',
       input: d.type === 'message_start' ? d.message.usage.input_tokens : undefined,
       output: d.type === 'message_delta' ? d.usage?.output_tokens : undefined,
     };
-    if (f === 'gemini') return {
+    if (format === 'gemini') return {
       text: (d.candidates?.[0]?.content?.parts || []).filter(x => !x.thought).map(x => x.text || '').join(''),
       input: d.usageMetadata?.promptTokenCount, output: d.usageMetadata?.candidatesTokenCount,
     };
@@ -849,7 +1047,7 @@
 
   // Request: instruction + summary of earlier steps, then the last exchanges in full, then the question
   function buildRequest(n) {
-    const { earlier, recent } = split(path(n.parent).filter(m => m.id !== ROOT));
+    const { earlier, recent } = split(contextPath(n.parent, n));
     let system = INSTRUCTION;
     if (earlier.length) system += '\n\nSummary of the earlier steps of this branch:\n' + earlier.map(m => `- ${m.kw}: ${m.sum}`).join('\n');
     const messages = [];
@@ -859,12 +1057,17 @@
     messages.push({ role: 'user', content: n.q });
     return { system, messages };
   }
+  function mergeRequest(n) {                   // same context, but the question comes with the existing answers
+    const { system, messages } = buildRequest(n);
+    const list = n.versions.filter(v => v.a && !v.error).map((v, i) => `Answer ${i + 1} (${v.by || 'LLM'}):\n${v.a}`).join('\n\n');
+    messages[messages.length - 1] = { role: 'user', content: `${n.q}\n\n${MERGE_INSTRUCTION}\n\n${list}` };
+    return { system, messages };
+  }
 
   // Streaming call: the answer is displayed as it arrives. All three formats send "data: {…}" lines.
-  async function askLLM(n) {
-    const { system, messages } = buildRequest(n);
-    const { url, body } = request(currentModel(), system, messages, { stream: true });
-    const r = await fetch(url, { method: 'POST', headers: headers(), body: JSON.stringify(body) });
+  async function askLLM(n, use, system, messages) {
+    const { url, body } = request(use, use.model, system, messages, { stream: true });
+    const r = await fetch(url, { method: 'POST', headers: headers(use), body: JSON.stringify(body) });
     if (!r.ok) throw await apiError(r);
     const reader = r.body.getReader(), decoder = new TextDecoder();
     let buffer = '';
@@ -877,7 +1080,7 @@
       for (const line of lines) {
         const data = line.startsWith('data:') ? line.slice(5).trim() : '';
         if (!data || data === '[DONE]') continue;   // other lines (event names, comments) are ignored
-        const piece = readPiece(JSON.parse(data));
+        const piece = readPiece(use.p.format, JSON.parse(data));
         if (piece.text) { n.a += piece.text; showStream(n); }
         if (piece.input != null || piece.output != null) {
           n.usage = { input: piece.input ?? n.usage?.input ?? 0, output: piece.output ?? n.usage?.output ?? 0 };
@@ -890,18 +1093,23 @@
   function showStream(n) {                     // updates only the answer text
     if (selection !== n.id) return;
     const p = document.querySelector(`#thread [data-id="${CSS.escape(n.id)}"] .a`);
-    if (p) p.textContent = n.a;
+    if (p) p.textContent = answerText(n);
+  }
+  async function complete(use, model, system, messages, maxTokens, json = false) {   // one answer, not streamed
+    const { url, body } = request(use, model, system, messages, { maxTokens, json });
+    const r = await fetch(url, { method: 'POST', headers: headers(use), body: JSON.stringify(body) });
+    if (!r.ok) throw await apiError(r);
+    return cleanText(readPiece(use.p.format, await r.json()).text);
   }
 
   // Structured answer following a "tool" schema. Claude is forced to fill in the tool; the other
   // providers are asked for a JSON object following the same schema, read from their text.
-  async function structured(tool, prompt, maxTokens) {
-    const p = provider();
-    if (p.format === 'anthropic') {
-      const r = await fetch(`${p.base}/messages`, {
-        method: 'POST', headers: headers(),
+  async function structured(use, tool, prompt, maxTokens) {
+    if (use.p.format === 'anthropic') {
+      const r = await fetch(`${use.p.base}/messages`, {
+        method: 'POST', headers: headers(use),
         body: JSON.stringify({
-          model: lightModel(), max_tokens: maxTokens,
+          model: use.light, max_tokens: maxTokens,
           tools: [tool], tool_choice: { type: 'tool', name: tool.name },
           messages: [{ role: 'user', content: prompt }],
         }),
@@ -910,12 +1118,7 @@
       return (await r.json()).content?.find(b => b.type === 'tool_use')?.input;
     }
     const system = JSON_INSTRUCTION + JSON.stringify(tool.input_schema);
-    const { url, body } = request(lightModel(), system, [{ role: 'user', content: prompt }], { json: true });
-    const r = await fetch(url, { method: 'POST', headers: headers(), body: JSON.stringify(body) });
-    if (!r.ok) throw await apiError(r);
-    const text = cleanText(readPiece(await r.json()).text);
-    const i = text.indexOf('{'), j = text.lastIndexOf('}');   // ignores any text around the object
-    return i < 0 || j < i ? null : JSON.parse(text.slice(i, j + 1));
+    return parseObject(await complete(use, use.light, system, [{ role: 'user', content: prompt }], maxTokens, true));
   }
 
   // Node card: keyword, emoji and summary of an exchange
@@ -932,25 +1135,260 @@
       required: ['keyword', 'emoji', 'summary'],
     },
   };
-  async function fillCard(n) {
-    const prompt = `Question: ${n.q}\n\nAnswer: ${n.a.slice(0, CARD_INPUT_LENGTH)}\n\n` +
-      'Fill in the card for this exchange, in the language of the question.';
-    const c = await structured(CARD_TOOL, prompt, MAX_TOKENS_CARD);
+  const cardPrompt = n => `Question: ${n.q}\n\nAnswer: ${n.a.slice(0, CARD_INPUT_LENGTH)}\n\n` +
+    'Fill in the card for this exchange, in the language of the question.';
+  function applyCard(n, c) {
     if (!c) return;
     if (c.keyword) n.kw = shorten(String(c.keyword), LLM_KEYWORD_LENGTH);
     n.ico = [...String(c.emoji || '')].slice(0, 4).join('');   // an emoji can span several characters
     if (c.summary) n.sum = String(c.summary);
   }
 
+  // ---------- Placement: which box a new question follows from ----------
+  // Tree index sent to the LLM: one line per box (id, parent, keyword, summary). The boxes near the
+  // current one come first, then the most recent ones, MAX_INDEX at most.
+  function treeIndex(currentId, excludeId = null) {
+    const near = new Set([...path(currentId), ...children(currentId)].map(m => m.id));
+    const room = MAX_INDEX - near.size;
+    const others = nodes.filter(m => !near.has(m.id) && m.id !== excludeId);
+    const keep = new Set([...near, ...(room > 0 ? others.slice(-room) : []).map(m => m.id)]);
+    keep.delete(excludeId);
+    return nodes.filter(m => keep.has(m.id)).map(m => `${m.id} | under ${m.parent ?? '-'} | ` +
+      (m.id === ROOT ? 'Start' : `${m.ico || ''} ${m.kw}: ${m.sum}`) + (m.id === currentId ? ' | CURRENT BOX' : '')).join('\n');
+  }
+  const ROUTE_TOOL = {
+    name: 'place',
+    description: 'Box of a conversation tree that a new message follows from',
+    input_schema: {
+      type: 'object',
+      properties: {
+        parent: { type: 'string', description: 'id of the box: the current box to continue, an earlier box to go back to its topic, or root for a new topic' },
+      },
+      required: ['parent'],
+    },
+  };
+  async function route(n) {                    // accurate mode: a first, small request chooses the box
+    const prompt = `Conversation tree (one box per line):\n${treeIndex(n.parent, n.id)}\n\nNew message: ${n.q}\n\n` +
+      'Which box does this new message follow from?';
+    try { placeAt(n, (await structured(using(settings.provider), ROUTE_TOOL, prompt, MAX_TOKENS_ROUTE))?.parent); }
+    catch { /* the question stays where the user is */ }
+  }
+  const economyPrompt = n => `\n\n${ECONOMY_INSTRUCTION}\n\nConversation tree (one box per line):\n${treeIndex(n.parent, n.id)}`;
+  function takeTrailer(n) {                    // economical mode: the last line, read then removed from the answer
+    const i = n.a.lastIndexOf(TRAILER_START);
+    if (i < 0) return null;
+    let data = null;
+    try { data = parseObject(n.a.slice(i)); } catch { /* malformed: ignored */ }
+    n.a = n.a.slice(0, i).trim();
+    return data;
+  }
+  function placeAt(n, id) {                    // moves a new box under the chosen parent, if that choice is valid
+    const target = node(String(id ?? ''));
+    if (!target || target.id === n.parent || path(target.id).some(m => m.id === n.id)) return;
+    n.parent = target.id;
+    n.pv = target.v;
+    snack(t('placedUnder', { keyword: keyword(target) }), t('move'), () => startMove(n.id));
+  }
+
+  // ---------- Synthesis of the tree ----------
+  function synthesisInput() {
+    const p = contextPath(selection);
+    return `Conversation tree (one box per line):\n${treeIndex(selection)}\n\n` +
+      `Path to the current box: ${['Start', ...p.map(m => m.kw)].join(' > ')}\n\n` +
+      'Last exchanges in full:\n' + split(p).recent.map(m => `Q: ${m.q}\nA: ${m.a}`).join('\n\n');
+  }
+  function localSynthesis() {                  // without the AI: the summaries of the boxes, put end to end
+    const lines = [`${t('whereWeAre')}: ${path(selection).map(label).join(' › ')}`, '', `${t('treeOutline')}:`];
+    (function walk(id, indent) {
+      for (const c of children(id)) { lines.push(`${indent}- ${label(c)}: ${c.sum}`); walk(c.id, indent + '  '); }
+    })(ROOT, '');
+    return lines.join('\n');
+  }
+  let lastSynthesis = '';
+  async function openSynthesis() {
+    closeMenu();
+    lastSynthesis = '';
+    openSheet({ title: t('synthesisTitle'), body: t('writingSynthesis'), actions: [{ label: t('close') }] });
+    let text = '', note = '';
+    try {
+      const use = using(settings.provider);
+      if (use.key) text = await complete(use, use.model, SYNTHESIS_INSTRUCTION, [{ role: 'user', content: synthesisInput() }], MAX_TOKENS_SYNTHESIS);
+    } catch { /* quota used up, network…: summaries instead */ }
+    if (!text) { text = localSynthesis(); note = t('localSynthesisNote'); }
+    lastSynthesis = text;
+    if (!$('sheet').open) return;               // closed meanwhile
+    openSheet({ title: t('synthesisTitle'), text: note, body: text, actions: [
+      { label: t('copy'), primary: true, keepOpen: true, run: () => copyText(lastSynthesis) },
+      { label: t('newBranch'), run: () => newBranchFrom(lastSynthesis) },
+      { label: t('close') },
+    ] });
+  }
+  function copyText(text) {
+    navigator.clipboard?.writeText(text).then(() => toast(t('copiedText'))).catch(() => toast(t('copyRefused')));
+  }
+  function newBranchFrom(text) {               // a new branch of the same tree, starting from the synthesis
+    const origin = node(selection);
+    const n = { id: 'n' + newId(), parent: ROOT, ico: '♻️', kw: t('restartKeyword'),
+      q: t('restartQuestion', { keyword: keyword(origin) }), a: text,
+      sum: t('restartSummary', { keyword: keyword(origin) }) };
+    nodes.push(n);
+    pinned = true;                             // the next question continues from it
+    select(n.id, true);
+    toast(t('restartDone'));
+  }
+
+  // ---------- Limit reached: another provider, or the synthesis ----------
+  function openLimit(n, pid) {
+    const others = readyProviders().filter(id => id !== pid);
+    openSheet({ title: t('limitTitle'), text: t('limitText', { provider: PROVIDERS[pid].name }), actions: [
+      ...others.map(id => ({ label: t('continueWith', { provider: PROVIDERS[id].name }), primary: true, run: () => {
+        settings.provider = id;
+        saveSettings();
+        applyStaticTexts();
+        answer(n, { pid: id });
+      } })),
+      ...(others.length ? [] : [{ label: t('settingsMenu'), primary: true, run: openSettings }]),
+      { label: t('synthesis'), run: openSynthesis },
+      { label: t('close') },
+    ] });
+  }
+
+  // ---------- Export: HTML, PDF (print), Markdown, OPML, JSON ----------
+  const today = () => new Date().toISOString().split('T')[0];
+  const XML_ENTITIES = { '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', '\n': '&#10;' };
+  const xml = s => String(s).replace(/[<>&"\n]/g, c => XML_ENTITIES[c]);
+  function openExport() {
+    closeMenu();
+    openSheet({ title: t('exportTitle'), text: t('exportNote'), actions: [
+      { label: 'HTML', primary: true, run: () => download('html', 'text/html', toHtml()) },
+      { label: 'PDF', run: printReport },
+      { label: 'Markdown', run: () => download('md', 'text/markdown', toMarkdown()) },
+      { label: 'OPML', run: () => download('opml', 'text/x-opml', toOpml()) },
+      { label: 'JSON', run: () => download('json', 'application/json', JSON.stringify({ version: EXPORT_VERSION, nodes, groups }, null, 2)) },
+      { label: t('close') },
+    ] });
+  }
+  function download(ext, type, text) {
+    const url = URL.createObjectURL(new Blob([text], { type: `${type};charset=utf-8` }));
+    const a = htmlEl('a');
+    a.href = url;
+    a.download = `${APP_NAME.toLowerCase()}-${today()}.${ext}`;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), DOWNLOAD_DELAY);
+  }
+  function toMarkdown() {
+    const lines = [`# ${APP_NAME} — ${today()}`, ''];
+    (function walk(id, level) {
+      for (const n of children(id)) {
+        lines.push(`${'#'.repeat(Math.min(level, MD_MAX_LEVEL))} ${label(n)}`, '', `**${n.q}**`, '', n.a, '');
+        for (const v of otherVersions(n)) lines.push(`*${t('otherVersion', { by: v.by || 'LLM' })}*`, '', v.a, '');
+        walk(n.id, level + 1);
+      }
+    })(ROOT, 2);
+    return lines.join('\n');
+  }
+  function toOpml() {
+    const note = n => [n.q, n.a, ...otherVersions(n).map(v => `${t('otherVersion', { by: v.by || 'LLM' })}\n${v.a}`)].join('\n\n');
+    const outline = id => children(id).map(n => `<outline text="${xml(label(n))}" _note="${xml(note(n))}">${outline(n.id)}</outline>`).join('');
+    return `<?xml version="1.0" encoding="UTF-8"?>\n<opml version="2.0"><head><title>${xml(APP_NAME)} ${today()}</title></head>` +
+      `<body>${outline(ROOT)}</body></opml>\n`;
+  }
+  // Report shared by the HTML and PDF exports: the whole tree drawn, then every box with its content
+  function buildReport() {
+    const report = htmlEl('article', 'report');
+    report.append(htmlEl('h1', null, `${APP_NAME} — ${today()}`), reportMap());
+    const section = n => {
+      const d = htmlEl('details');
+      d.open = true;
+      d.id = 'node-' + n.id;
+      d.append(htmlEl('summary', null, label(n)), htmlEl('p', 'q', n.q), htmlEl('p', 'a', n.a));
+      for (const v of otherVersions(n)) d.append(htmlEl('p', 'version', t('otherVersion', { by: v.by || 'LLM' })), htmlEl('p', 'a', v.a));
+      for (const c of children(n.id)) d.append(section(c));
+      return d;
+    };
+    for (const c of children(ROOT)) report.append(section(c));
+    return report;
+  }
+  function reportMap() {                       // the whole tree (merged boxes expanded), drawn with plain attributes
+    const v = visibleTree([]), pos = layout(v), W = NODE_WIDTH, H = NODE_HEIGHT;
+    const xs = Object.values(pos).map(p => p.x), ys = Object.values(pos).map(p => p.y);
+    const x0 = Math.min(...xs) - W / 2 - MAP_MARGIN, y0 = Math.min(...ys) - H / 2 - MAP_MARGIN;
+    const width = Math.max(...xs) - Math.min(...xs) + W + 2 * MAP_MARGIN, height = Math.max(...ys) - Math.min(...ys) + H + 2 * MAP_MARGIN;
+    const map = svgEl('svg', { class: 'map', viewBox: `${x0} ${y0} ${width} ${height}`, role: 'img', 'aria-label': t('mapLabel') });
+    for (const u of v.units.values()) {
+      if (u.parent != null) map.append(svgEl('path', { d: linkPath(pos[u.parent], pos[u.id]), fill: 'none', stroke: EXPORT_LINE, 'stroke-width': 3 }));
+    }
+    for (const u of v.units.values()) {
+      const root = u.id === ROOT;
+      const g = svgEl('g', { transform: `translate(${pos[u.id].x},${pos[u.id].y})` });
+      g.append(svgEl('rect', { x: -W / 2, y: -H / 2, width: W, height: H, rx: H / 2,
+        fill: root ? EXPORT_INK : EXPORT_PAPER, stroke: EXPORT_INK, 'stroke-width': 2 }));
+      const text = svgEl('text', { 'text-anchor': 'middle', dy: '0.35em', 'font-size': 15, 'font-family': 'system-ui, sans-serif',
+        fill: root ? EXPORT_PAPER : EXPORT_INK });
+      text.textContent = (u.rep.ico ? u.rep.ico + ' ' : '') + shorten(keyword(u.rep), KEYWORD_LENGTH);
+      g.append(text);
+      if (root) { map.append(g); continue; }
+      const link = svgEl('a', { href: '#node-' + u.id });   // tapping a box jumps to its content
+      link.append(g);
+      map.append(link);
+    }
+    return map;
+  }
+  function toHtml() {
+    const { lang, dir } = document.documentElement;
+    return `<!DOCTYPE html>\n<html lang="${xml(lang)}" dir="${xml(dir)}"><head><meta charset="utf-8">` +
+      `<meta name="viewport" content="width=device-width, initial-scale=1"><title>${xml(APP_NAME)} ${today()}</title>` +
+      `<style>${EXPORT_CSS}</style></head><body>${buildReport().outerHTML}</body></html>\n`;
+  }
+  function printReport() {                     // the browser's print window offers "Save as PDF"
+    const view = $('print-view');
+    view.textContent = '';
+    view.append(buildReport());
+    addEventListener('afterprint', () => { view.textContent = ''; }, { once: true });
+    print();
+  }
+
+  // ---------- Sheet (dialog with actions) and snackbar (message with one action) ----------
+  // actions: [{ label, primary, keepOpen, run }]
+  function openSheet({ title, text = '', body = null, actions }) {
+    $('sheet-title').textContent = title;
+    $('sheet-text').textContent = text;
+    $('sheet-text').hidden = !text;
+    $('sheet-body').hidden = body == null;
+    $('sheet-body').textContent = body ?? '';
+    const box = $('sheet-actions');
+    box.textContent = '';
+    for (const a of actions) {
+      const b = htmlEl('button', a.primary ? 'primary' : null, a.label);
+      b.type = 'button';
+      b.addEventListener('click', () => { if (!a.keepOpen) $('sheet').close(); a.run?.(); });
+      box.append(b);
+    }
+    if (!$('sheet').open) $('sheet').showModal();
+  }
+  let snackTimer;
+  function snack(text, actionLabel, run) {
+    const s = $('snack'), b = s.querySelector('button');
+    s.querySelector('span').textContent = text;
+    b.textContent = actionLabel;
+    b.onclick = () => { s.classList.remove('on'); run(); };
+    s.classList.add('on');
+    clearTimeout(snackTimer);
+    snackTimer = setTimeout(() => s.classList.remove('on'), SNACK_DURATION);
+  }
+
   // ---------- LLM settings (keys kept on the device only) ----------
   function loadSettings() {
     const s = readJson(SETTINGS_KEY) || {};
-    const out = { provider: DEFAULT_PROVIDER, keys: {}, models: {}, workspace: '', keep: false, language: '', ...s };
+    const out = { provider: DEFAULT_PROVIDER, keys: {}, models: {}, workspace: '', keep: false, language: '', placement: PLACEMENTS[0], ...s };
     if (s.key) out.keys.anthropic = s.key;      // settings saved by v4, when Claude was the only provider
     if (s.model) out.models.anthropic = s.model;
     delete out.key;
     delete out.model;
     if (!PROVIDERS[out.provider]) out.provider = DEFAULT_PROVIDER;
+    if (!PLACEMENTS.includes(out.placement)) out.placement = PLACEMENTS[0];
     return out;
   }
   function saveSettings() {
@@ -962,6 +1400,12 @@
     o.value = id;
     $('set-provider').append(o);
   }
+  for (const id of PLACEMENTS) {
+    const o = htmlEl('option');
+    o.value = id;
+    $('set-placement').append(o);
+  }
+  function placementLabel(id) { return 'placement' + id[0].toUpperCase() + id.slice(1); }   // key of its text in UI
   function modeLabel() {
     if (!apiKey()) return t('modeDemo');
     const p = provider(), m = currentModel(), labelKey = p.modelLabels?.[m];
@@ -979,6 +1423,7 @@
     $('set-workspace').value = settings.workspace;
     $('set-keep').checked = settings.keep;
     $('set-language').value = settings.language;
+    $('set-placement').value = settings.placement;
     $('settings').showModal();
   }
   function showProvider() {
@@ -1022,7 +1467,7 @@
   }
   async function listModels(p, key) {
     const url = p.format === 'gemini' ? `${p.base}/models?pageSize=${MODEL_PAGE}` : `${p.base}/models`;
-    const h = headers(p, key);
+    const h = headers({ p, key });
     delete h['content-type'];
     const r = await fetch(url, { headers: h });
     if (!r.ok) return [];
@@ -1039,7 +1484,7 @@
     keepDraft();
     Object.assign(settings, {
       provider: shown, keys: draft.keys, models: draft.models, workspace: $('set-workspace').value.trim(),
-      keep: $('set-keep').checked, language: $('set-language').value.trim(),
+      keep: $('set-keep').checked, language: $('set-language').value.trim(), placement: $('set-placement').value,
     });
     saveSettings();
   }
@@ -1079,17 +1524,12 @@
     if (!$('menu').hidden && !e.target.closest('#menu, #btn-menu')) closeMenu();
   });
   $('btn-settings').addEventListener('click', openSettings);
+  $('btn-synthesis').addEventListener('click', openSynthesis);
+  $('btn-export').addEventListener('click', openExport);
   $('btn-select').addEventListener('click', () => setSelectMode(true));
-  $('btn-cancel').addEventListener('click', () => setSelectMode(false));
+  $('btn-cancel').addEventListener('click', () => (moving ? endMove() : setSelectMode(false)));
   $('btn-merge').addEventListener('click', merge);
   $('btn-fit').addEventListener('click', fit);
-  $('btn-export').addEventListener('click', () => {
-    closeMenu();
-    const json = JSON.stringify({ version: 3, nodes, groups }, null, 2);
-    navigator.clipboard?.writeText(json)
-      .then(() => toast(t('copied')))
-      .catch(() => toast(t('copyRefused')));
-  });
   let resetPending = null;
   $('btn-reset').addEventListener('click', e => {
     const b = e.currentTarget;
