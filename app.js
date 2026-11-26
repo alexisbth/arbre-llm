@@ -1,4 +1,4 @@
-/* Ramifai — proof of concept (POC), v6
+/* Ramifai — proof of concept (POC), v7
  *
  * Overall approach
  * 1. Data: a flat list of nodes { id, parent, q, a, kw, sum, ico }.
@@ -13,10 +13,12 @@
  * 7. LLM: the user picks a provider (Claude, Gemini, Groq, OpenRouter or ChatGPT; three have a free
  *    tier) and pastes its key, kept on the device. The question is sent with the compact context;
  *    the answer streams in, then the LLM fills in the node's card (keyword, emoji, summary).
+ *    OpenRouter also offers "Sign in" (OAuth PKCE): the app receives a key linked to the user's account.
  *    Without a key: simulated answers (demo mode).
  *    Each answer can be regenerated (with any provider) or merged: a node keeps all its versions.
  *    Placement: the app can choose by itself which box a new question follows from.
  *    Synthesis of the tree (written by the LLM, or the summaries put end to end) and exports.
+ *    A JSON export can be opened again; the MCP connector (folder mcp/) writes trees in the same format.
  * 8. Interface language: the English texts (UI) are translated by the LLM into the chosen
  *    language, checked, then kept on the device. Right-to-left languages mirror the layout.
  * Security: all text is inserted with textContent (never innerHTML), no third-party script.
@@ -53,7 +55,7 @@
   //   prefer picks the default in it when the current model is not offered (models get renamed often).
   // label / note: keys of texts in UI. cardModel: smaller model for the node card and the translation.
   // keyUrl: page where the user creates a key. keyPattern: how its keys begin, to recognize a key pasted under
-  //   another provider.
+  //   another provider. signIn: pages of the "Sign in" button (OAuth PKCE), which gets a key without copy-paste.
   const PROVIDERS = {
     anthropic: { name: 'Claude', format: 'anthropic', base: 'https://api.anthropic.com/v1', placeholder: 'sk-ant-…',
       keyUrl: 'https://console.anthropic.com/settings/keys', keyPattern: /^sk-ant-/,
@@ -74,6 +76,7 @@
       skip: /whisper|tts|guard|orpheus|playai|compound/, prefer: [/gpt-oss-120b/, /llama-3\.3-70b/] },
     openrouter: { name: 'OpenRouter', format: 'openai', base: 'https://openrouter.ai/api/v1', placeholder: 'sk-or-…',
       keyUrl: 'https://openrouter.ai/settings/keys', keyPattern: /^sk-or-/,
+      signIn: { auth: 'https://openrouter.ai/auth', exchange: 'https://openrouter.ai/api/v1/auth/keys' },
       label: 'providerOpenrouter', note: 'noteOpenrouter', list: true,
       models: ['openrouter/free'], pinned: ['openrouter/free'], keep: /:free$/ },
     openai: { name: 'ChatGPT', format: 'openai', base: 'https://api.openai.com/v1', placeholder: 'sk-…',
@@ -113,6 +116,9 @@
   const CARD_INPUT_LENGTH = 6000;      // characters of the answer sent to build the card
   const LLM_KEYWORD_LENGTH = 30;       // characters kept for an LLM-generated keyword
   const SETTINGS_KEY = 'arbre-llm-settings';
+  const SIGN_IN_KEY = 'ramifai-sign-in';     // sessionStorage: what a sign-in needs when the user comes back
+  const SIGN_IN_RANDOM_BYTES = 32;     // length of the random verifier and state of a sign-in
+  const OPEN_MAX_BYTES = 10 * 1024 * 1024;   // largest tree file the app agrees to open
   const TRANSLATIONS_KEY = 'arbre-llm-translations';
   const INSTRUCTION = 'You are answering inside a tree-shaped conversation app. Answer in the language of the question, ' +
     'in plain text, without Markdown or LaTeX: write formulas in a readable notation (Unicode) and define every notation.';
@@ -146,7 +152,8 @@
     noteGemini: 'Free tier: create the key at aistudio.google.com. On the free tier, Google may use your conversations ' +
       'to improve its products.',
     noteGroq: 'Free tier, no card needed: create the key at console.groq.com. Beyond the free limits, requests are refused, not billed.',
-    noteOpenrouter: 'Free models: create the key at openrouter.ai. The model openrouter/free picks a free model for you. ' +
+    noteOpenrouter: 'Free models: sign in with your OpenRouter account, or create a key at openrouter.ai. ' +
+      'The model openrouter/free picks a free model for you. ' +
       'About 50 free requests a day; a question uses 1 to 3 of them, depending on “New questions” below.',
     noteOpenai: 'Paid: buy credits at platform.openai.com and create the key there. ChatGPT Pro and Business include monthly API credits.',
     placement: 'New questions', placementAccurate: 'Placed automatically · accurate (3 requests per question)',
@@ -191,7 +198,13 @@
     limitText: '{provider} refuses new requests for now (quota or credits used up). You can continue with another ' +
       'provider, or copy the synthesis to use it elsewhere.',
     continueWith: 'Continue with {provider}', exportMenu: 'Export', exportTitle: 'Export the tree',
-    exportNote: 'PDF: choose “Save as PDF” in the print window.', otherVersion: 'Other version ({by})',
+    exportNote: 'PDF: choose “Save as PDF” in the print window. JSON: the file Ramifai can open again.',
+    openMenu: 'Open a file', openTitle: 'Open this tree?', openConfirm: 'Open', opened: 'Tree opened',
+    openNote: 'The tree on screen ({count} boxes) will be replaced by the one in the file ({fileCount} boxes). ' +
+      'To keep it, export it first (JSON).',
+    openFailed: 'This file is not a Ramifai tree (JSON export)',
+    signIn: 'Sign in with {provider}', signInFailed: 'Sign-in failed: try again, or paste a key',
+    otherVersion: 'Other version ({by})',
     resetDone: 'Example tree restored', translating: 'Translating the interface…', translated: 'Interface translated',
     translationNeedsKey: 'Translation needs an API key: the interface stays in English.',
     translationFailed: 'Translation failed: the interface stays in English.',
@@ -1286,6 +1299,59 @@
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), DOWNLOAD_DELAY);
   }
+
+  // ---------- Open a tree file (the JSON export, also written by the MCP connector) ----------
+  // Checks: a list of nodes with distinct ids, one root, every other node going up to the root (no loop).
+  // Texts become strings; a merged group is kept only if all its members are in the file.
+  function readTree(data) {
+    if (!Array.isArray(data?.nodes)) return null;
+    const text = v => (typeof v === 'string' ? v : '');
+    const list = data.nodes.filter(n => n && typeof n.id === 'string').map(n => {
+      const m = { ...n, parent: n.id === ROOT ? null : n.parent, q: text(n.q), a: text(n.a), kw: text(n.kw), sum: text(n.sum), ico: text(n.ico) };
+      delete m.pending;
+      delete m.placing;
+      if (!Array.isArray(m.versions)) { delete m.versions; delete m.v; }
+      else if (!Number.isInteger(m.v) || !m.versions[m.v]) m.v = 0;
+      return m;
+    });
+    const byId = new Map(list.map(n => [n.id, n]));
+    if (byId.size !== list.length || !byId.has(ROOT)) return null;
+    for (const n of list) {
+      let up = n;
+      for (let steps = 0; up.id !== ROOT; steps++) {
+        up = byId.get(up.parent);
+        if (!up || steps > list.length) return null;   // missing parent, or a loop
+      }
+    }
+    const kept = (Array.isArray(data.groups) ? data.groups : [])
+      .filter(g => typeof g?.id === 'string' && Array.isArray(g.members) && g.members.length > 1 && g.members.every(id => byId.has(id)));
+    return { nodes: list, groups: kept };
+  }
+  function openFile() {
+    closeMenu();
+    $('open-file').value = '';                  // the same file can be chosen again
+    $('open-file').click();
+  }
+  $('open-file').addEventListener('change', async () => {
+    const file = $('open-file').files[0];
+    if (!file) return;
+    let tree = null;
+    try { if (file.size <= OPEN_MAX_BYTES) tree = readTree(JSON.parse(await file.text())); } catch { /* not JSON */ }
+    if (!tree) { toast(t('openFailed')); return; }
+    openSheet({ title: t('openTitle'), text: t('openNote', { count: nodes.length, fileCount: tree.nodes.length }), actions: [
+      { label: t('openConfirm'), primary: true, run: () => {
+        nodes = tree.nodes;
+        groups = tree.groups;
+        selection = nodes[nodes.length - 1].id;   // the last box written
+        saveState();
+        draw();
+        fit();
+        toast(t('opened'));
+      } },
+      { label: t('cancel') },
+    ] });
+  });
+
   function toMarkdown() {
     const lines = [`# ${APP_NAME} — ${today()}`, ''];
     (function walk(id, level) {
@@ -1443,6 +1509,8 @@
     $('key-note').textContent = t('keyNote', { host: new URL(p.base).host });
     $('key-link').href = p.keyUrl;
     $('key-link').textContent = t('getKey', { host: new URL(p.keyUrl).host });
+    $('btn-sign-in').hidden = !p.signIn;
+    $('btn-sign-in').textContent = t('signIn', { provider: p.name });
     $('workspace-field').hidden = p.format !== 'anthropic';
     fillModelList(p, p.models);
     loadModels(shown);
@@ -1530,6 +1598,47 @@
   $('btn-clear-key').addEventListener('click', () => { $('set-key').value = ''; });
   $('btn-close').addEventListener('click', () => $('settings').close());
 
+  // ---------- Sign in (OAuth PKCE): a key linked to the user's account, without copy-paste nor server ----------
+  // 1. A random "verifier" stays in this tab; only its SHA-256 hash (the "challenge") is sent to the provider.
+  // 2. The user signs in on the provider's site, which sends them back here with a one-time code.
+  // 3. The app exchanges the code and the verifier for a key: a stolen code alone is useless.
+  // "state" is a second random value, returned unchanged: it proves the user comes back from our own request.
+  const base64url = bytes => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const randomText = () => base64url(crypto.getRandomValues(new Uint8Array(SIGN_IN_RANDOM_BYTES)));
+  const appUrl = () => location.origin + location.pathname;
+  async function signIn(id) {
+    const verifier = randomText(), state = randomText();
+    try {
+      const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
+      sessionStorage.setItem(SIGN_IN_KEY, JSON.stringify({ id, verifier, state }));
+      const url = new URL(PROVIDERS[id].signIn.auth);
+      url.search = new URLSearchParams({ callback_url: appUrl(), code_challenge: base64url(hash),
+        code_challenge_method: 'S256', state, key_label: APP_NAME });
+      location.assign(url);
+    } catch { toast(t('signInFailed')); }      // storage or crypto refused by the browser
+  }
+  async function finishSignIn() {
+    const params = new URLSearchParams(location.search), code = params.get('code');
+    let saved = null;
+    try { saved = JSON.parse(sessionStorage.getItem(SIGN_IN_KEY)); sessionStorage.removeItem(SIGN_IN_KEY); } catch { /* ignored */ }
+    if (!saved) return;                         // no sign-in under way in this tab
+    history.replaceState(null, '', appUrl());   // the code leaves the address bar
+    const p = PROVIDERS[saved.id];
+    try {
+      if (!p?.signIn || !code || params.get('state') !== saved.state) throw new Error('refused');
+      const r = await fetch(p.signIn.exchange, { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ code, code_verifier: saved.verifier, code_challenge_method: 'S256' }) });
+      const key = r.ok ? (await r.json()).key : null;
+      if (typeof key !== 'string' || !key) throw new Error('no key');
+      settings.keys[saved.id] = key;
+      settings.provider = saved.id;
+      saveSettings();
+      applyStaticTexts();
+      toast(t('connected', { provider: p.name }));
+    } catch { toast(t('signInFailed')); }
+  }
+  $('btn-sign-in').addEventListener('click', () => { readSettingsForm(); signIn(shown); });
+
   // ---------- Top bar ----------
   function closeMenu() {
     $('menu').hidden = true;
@@ -1546,6 +1655,7 @@
   $('btn-settings').addEventListener('click', openSettings);
   $('btn-synthesis').addEventListener('click', openSynthesis);
   $('btn-export').addEventListener('click', openExport);
+  $('btn-open').addEventListener('click', openFile);
   $('btn-select').addEventListener('click', () => setSelectMode(true));
   $('btn-cancel').addEventListener('click', () => (moving ? endMove() : setSelectMode(false)));
   $('btn-merge').addEventListener('click', merge);
@@ -1573,6 +1683,7 @@
 
   // ---------- Startup ----------
   changeLanguage(false);                        // applies the saved language (translates it if needed)
+  finishSignIn();                               // back from the provider's sign-in page
   requestAnimationFrame(fit);
   addEventListener('resize', () => centerOn(selection));   // e.g. the keyboard opening
 
