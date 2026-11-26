@@ -11,25 +11,31 @@
 //    security only lets the user reach their own trees. This function holds no secret key.
 //
 // Stateless: each request gets its own MCP server and transport (no session to keep between requests).
+// show_tree and add_exchange also draw the tree in the conversation (MCP Apps page, see view.ts).
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { McpServer } from 'npm:@modelcontextprotocol/sdk@1.32.2/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from 'npm:@modelcontextprotocol/sdk@1.32.2/server/webStandardStreamableHttp.js';
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { z } from 'npm:zod@4';
 import * as tree from './tree.ts';
+import { VIEW_HTML } from './view.ts';
 
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const PUBLIC_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;          // public key: only lets requests reach the API
 const RESOURCE = `${SUPABASE_URL}/functions/v1/mcp`;            // this connector's public address
 const METADATA_PATH = '/.well-known/oauth-protected-resource';
 const TEXT_LENGTH = 100_000;                                    // longest question or answer accepted
 const EMOJI_LENGTH = 8;
+const VIEW_URI = 'ui://ramifai/tree-v1.html';                   // the tree drawn in the conversation (view.ts)
+const VIEW_MIME = 'text/html;profile=mcp-app';                  // MCP Apps page
+const view = { ui: { resourceUri: VIEW_URI } };                 // tools whose result is shown with the drawn tree
 
 const INSTRUCTIONS = 'Ramifai keeps conversations as trees. Each box holds one question and its answer, with a short ' +
   'keyword, a one-sentence summary and an emoji; its parent is the box it follows from. To continue in a tree: ' +
   'show_tree to see the boxes, read_branch on the box to follow from (it gives the context), answer the user, then ' +
-  'add_exchange to record the question and your answer under that box. If the tree or the box is unclear, ask the user.';
+  'add_exchange to record the question and your answer under that box. If the tree or the box is unclear, ask the user. ' +
+  'show_tree and add_exchange also draw the tree for the user, so there is no need to describe its shape.';
 
 // Answers to browsers too (e.g. the MCP Inspector), which ask before sending these headers
 const CORS = {
@@ -55,10 +61,15 @@ const unauthorized = (why: string) => json({ error: 'invalid_token', error_descr
 // The tools, bound to the database client of the signed-in user
 function buildServer(db: SupabaseClient): McpServer {
   const server = new McpServer({ name: 'ramifai', version: VERSION }, { instructions: INSTRUCTIONS });
-  // A tool's answer is plain text; an error is returned as text too, so the assistant can correct its call
-  const reply = <A>(task: (args: A) => Promise<string>) => async (args: A) => {
-    try { return { content: [{ type: 'text' as const, text: await task(args) }] }; }
-    catch (e) { return { content: [{ type: 'text' as const, text: (e as Error).message }], isError: true }; }
+  // A tool's answer is plain text, plus data for the drawn tree when there is one; an error is returned as text
+  // too, so the assistant can correct its call
+  type Answer = string | { text: string; data: Record<string, unknown> };
+  const reply = <A>(task: (args: A) => Promise<Answer>) => async (args: A) => {
+    try {
+      const r = await task(args);
+      return typeof r === 'string' ? { content: [{ type: 'text' as const, text: r }] }
+        : { content: [{ type: 'text' as const, text: r.text }], structuredContent: r.data };
+    } catch (e) { return { content: [{ type: 'text' as const, text: (e as Error).message }], isError: true }; }
   };
   const load = async (name: string): Promise<tree.Tree> => {
     const { data, error } = await db.from('trees').select('data').eq('name', name).maybeSingle();
@@ -97,10 +108,25 @@ function buildServer(db: SupabaseClient): McpServer {
 
   server.registerTool('show_tree', {
     title: 'Show a tree',
-    description: 'Plan of a tree: one line per box (id · emoji keyword — summary), indented under its parent.',
+    description: 'Plan of a tree: one line per box (id · emoji keyword — summary), indented under its parent. ' +
+      'The user also sees the tree drawn.',
     inputSchema: { tree: treeName },
     annotations: readOnly,
-  }, reply(async ({ tree: name }: { tree: string }) => tree.outline(await load(name))));
+    _meta: view,
+  }, reply(async ({ tree: name }: { tree: string }) => ({ text: tree.outline(await load(name)), data: { tree: name } })));
+
+  // Only for the drawn tree (the page calls it): the whole tree, which the model does not need to receive again
+  server.registerTool('get_tree_view', {
+    title: 'Tree for the drawing',
+    description: 'Whole tree, for the drawn view only.',
+    inputSchema: { tree: treeName },
+    annotations: readOnly,
+    _meta: { ui: { resourceUri: VIEW_URI, visibility: ['app'] } },
+  }, reply(async ({ tree: name }: { tree: string }) => {
+    const data = await load(name);
+    const nodes = data.nodes.map(({ id, parent, q, a, kw, sum, ico }) => ({ id, parent, q, a, kw, sum, ico }));
+    return { text: `Tree "${name}" sent to the view.`, data: { name, title: tree.titleOf(data), nodes } };
+  }));
 
   server.registerTool('read_branch', {
     title: 'Read a branch',
@@ -112,7 +138,8 @@ function buildServer(db: SupabaseClient): McpServer {
 
   server.registerTool('add_exchange', {
     title: 'Add an exchange',
-    description: 'Record a question and its answer as a new box under a parent box. Returns the id of the new box.',
+    description: 'Record a question and its answer as a new box under a parent box. Returns the id of the new box. ' +
+      'The user sees the tree drawn, with the new box.',
     inputSchema: {
       tree: treeName,
       parent: z.string().max(tree.NAME_LENGTH).describe(`Id of the box this exchange follows from ("${tree.ROOT}" for a new branch from the start)`),
@@ -123,6 +150,7 @@ function buildServer(db: SupabaseClient): McpServer {
       emoji: z.string().max(EMOJI_LENGTH).optional().describe('One emoji for the box'),
     },
     annotations: adds,
+    _meta: view,
   }, reply(async (a: { tree: string; parent: string; question: string; answer: string; keyword: string; summary: string; emoji?: string }) => {
     const data = await load(a.tree);
     tree.find(data, a.parent);
@@ -132,7 +160,12 @@ function buildServer(db: SupabaseClient): McpServer {
     const { data: added, error } = await db.rpc('add_tree_node', { tree_name: a.tree, node });
     if (error) throw new Error(error.message);
     if (!added) throw new Error(`The tree "${a.tree}" or the box "${a.parent}" no longer exists.`);
-    return `Box "${node.id}" added under "${a.parent}".`;
+    return { text: `Box "${node.id}" added under "${a.parent}".`, data: { tree: a.tree, box: node.id } };
+  }));
+
+  server.registerResource('tree-view', VIEW_URI, { title: 'Ramifai tree', mimeType: VIEW_MIME,
+    description: 'The tree drawn in the conversation' }, async () => ({
+    contents: [{ uri: VIEW_URI, mimeType: VIEW_MIME, text: VIEW_HTML, _meta: { ui: { prefersBorder: true } } }],
   }));
   return server;
 }
