@@ -3,151 +3,227 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ramifai dans Claude — guide pas à pas · step-by-step guide</title>
+<title>Ramifai — guide · guide</title>
 <style>
-  :root { color-scheme: light dark; --bg:#faf9f5; --fg:#1f1e1d; --muted:#6b6a68; --card:#fff; --line:#e4e2da; --accent:#c96442; }
-  @media (prefers-color-scheme: dark) { :root { --bg:#262624; --fg:#f0eee6; --muted:#a8a69e; --card:#30302e; --line:#44433f; --accent:#e08a6a; } }
+  :root { color-scheme: light dark; --bg:#faf9f5; --fg:#1f1e1d; --muted:#6b6a68; --card:#fff; --line:#e4e2da; --accent:#c96442; --warn:#fff4d6; --warnfg:#5c4400; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#262624; --fg:#f0eee6; --muted:#a8a69e; --card:#30302e; --line:#44433f; --accent:#e08a6a; --warn:#4a3d12; --warnfg:#f5e3a8; } }
   * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg); font:17px/1.6 system-ui, sans-serif; }
-  main { max-width: 40rem; margin: 0 auto; padding: 1.5rem 1.1rem 4rem; }
-  h1 { font-size: 1.7rem; margin: .2rem 0 .3rem; }
-  h2 { font-size: 1.3rem; margin: 2.2rem 0 .6rem; padding-top: 1rem; border-top: 1px solid var(--line); }
-  .lang a { color: var(--accent); font-weight: 600; margin-right: 1rem; }
-  .intro { color: var(--muted); margin-top: 0; }
-  ol { padding-left: 0; list-style: none; counter-reset: s; }
-  ol > li { counter-increment: s; position: relative; margin: 1rem 0; padding: .9rem 1rem .9rem 3.2rem; background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
-  ol > li::before { content: counter(s); position: absolute; left: .9rem; top: .85rem; width: 1.6rem; height: 1.6rem; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 700; font-size: .95rem; display: flex; align-items: center; justify-content: center; }
-  code { background: rgba(127,127,127,.15); padding: .1rem .35rem; border-radius: 5px; font-size: .92em; }
-  .addr { display: block; margin: .5rem 0 .2rem; padding: .7rem .8rem; word-break: break-all; user-select: all; -webkit-user-select: all; font-size: .9rem; border: 1px dashed var(--accent); background: transparent; }
-  .tip { color: var(--muted); font-size: .95rem; margin: .4rem 0 0; }
-  details { margin: .6rem 0; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: .6rem 1rem; }
-  summary { cursor: pointer; font-weight: 600; }
-  p, li { margin-top: .3rem; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:18px/1.55 system-ui, sans-serif; }
+  main { max-width: 34rem; margin: 0 auto; padding: 1rem 1.1rem 3rem; min-height: 100vh; display: flex; flex-direction: column; }
+  header { display:flex; justify-content: space-between; align-items:center; margin-bottom: .8rem; }
+  .logo { font-weight: 700; font-size: 1.1rem; }
+  .lang button { background:none; border:0; color:var(--muted); font:inherit; font-size:.95rem; cursor:pointer; padding:.3rem .4rem; }
+  .lang button.on { color:var(--accent); font-weight:700; }
+  .bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin-bottom: 1.4rem; }
+  .bar i { display:block; height:100%; width:0; background: var(--accent); transition: width .25s; }
+  .count { color: var(--muted); font-size: .9rem; margin: 0 0 .3rem; }
+  h1 { font-size: 1.55rem; line-height: 1.25; margin: 0 0 .7rem; }
+  .text { font-size: 1.1rem; margin: 0 0 1rem; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 1rem; margin: 0 0 1rem; }
+  .big { display:block; width:100%; text-align:left; font:inherit; font-size:1.15rem; font-weight:600; padding: 1.1rem 1.1rem; margin: .7rem 0; background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 14px; cursor: pointer; }
+  .big small { display:block; font-weight:400; color: var(--muted); font-size: .92rem; }
+  .big:active, .big:hover { border-color: var(--accent); }
+  .addr { display:flex; gap:.5rem; align-items:stretch; margin: 0 0 1rem; }
+  .addr code { flex:1; word-break: break-all; font-size:.85rem; padding:.6rem .7rem; border:1px dashed var(--accent); border-radius: 10px; user-select: all; -webkit-user-select: all; background: transparent; }
+  .addr button { font:inherit; font-weight:700; padding: 0 1rem; border:0; border-radius:10px; background: var(--accent); color:#fff; cursor:pointer; }
+  .addr button.ok { background:#2e8b57; }
+  code { background: rgba(127,127,127,.15); padding:.05rem .3rem; border-radius:5px; font-size:.92em; }
+  .warn { background: var(--warn); color: var(--warnfg); border-radius: 12px; padding: .7rem .9rem; font-size: .95rem; margin: 0 0 1rem; }
+  .actions { margin-top:auto; padding-top: 1rem; }
+  .primary { width:100%; font:inherit; font-size:1.15rem; font-weight:700; padding: 1rem; border:0; border-radius: 14px; background: var(--accent); color:#fff; cursor:pointer; }
+  .row { display:flex; justify-content: space-between; gap:.5rem; margin-top:.6rem; }
+  .link { background:none; border:0; color: var(--muted); font:inherit; font-size:.98rem; cursor:pointer; padding:.6rem .2rem; text-decoration: underline; }
+  .help { display:none; }
+  .help.open { display:block; }
+  a { color: var(--accent); }
 </style>
 </head>
 <body>
 <main>
-
-<p class="lang"><a href="#fr">Français</a><a href="#en">English</a></p>
-
-<!-- ============================== FRANÇAIS ============================== -->
-<section id="fr" lang="fr">
-<h1>Ramifai dans Claude</h1>
-<p class="intro">Ramifai garde vos conversations avec Claude sous forme d'arbre (carte mentale). Ce guide explique comment l'ajouter à Claude, sans aucune connaissance technique. Comptez 5 minutes. Vous n'avez besoin ni de GitHub, ni d'installer quoi que ce soit.</p>
-
-<h2>Ce qu'il vous faut</h2>
-<ul>
-  <li>Un compte Claude (le site <b>claude.ai</b> ou l'application). Selon votre abonnement, Claude peut limiter l'ajout de connecteurs : si l'option manque, regardez l'aide de Claude (support.claude.com).</li>
-  <li>Une adresse e-mail que vous consultez facilement : Ramifai vous y envoie un code pour vous connecter.</li>
-</ul>
-
-<h2>Ajouter Ramifai à Claude</h2>
-<ol>
-  <li>
-    <b>Ouvrez Claude</b> sur <code>claude.ai</code> dans votre navigateur (ordinateur ou téléphone), et connectez-vous.
-    <p class="tip">Une fois ajouté sur le site, Ramifai apparaît aussi dans l'application Claude de votre téléphone.</p>
-  </li>
-  <li>
-    Allez dans <b>Paramètres</b> (votre nom ou votre photo, en bas à gauche), puis <b>Connecteurs</b>, puis <b>Ajouter un connecteur personnalisé</b>.
-  </li>
-  <li>
-    Dans <b>Nom</b>, écrivez <code>Ramifai</code>. Dans <b>Adresse (URL)</b>, collez l'adresse ci-dessous (touchez-la une fois pour la sélectionner en entier, puis copiez) :
-    <code class="addr">https://rhxlsyymnenlvureuxdf.supabase.co/functions/v1/mcp</code>
-    Validez avec <b>Ajouter</b>.
-  </li>
-  <li>
-    Cliquez sur <b>Connecter</b> à côté de Ramifai. Une page Ramifai s'ouvre : saisissez votre <b>adresse e-mail</b>.
-  </li>
-  <li>
-    Ouvrez votre boîte mail. Vous recevez un message « Your Ramifai sign-in code » avec un <b>code à 6 chiffres</b>. Recopiez-le dans la page Ramifai.
-    <p class="tip">Rien dans les 2 minutes ? Regardez les spams / courriers indésirables. L'expéditeur est <code>no-reply@virtom.life</code>.</p>
-  </li>
-  <li>
-    La page vous montre quel assistant demande l'accès. Cliquez sur <b>Autoriser</b>. Vous revenez dans Claude : c'est fini.
-  </li>
-</ol>
-
-<h2>S'en servir</h2>
-<ol>
-  <li>Dans une <b>nouvelle conversation</b>, écrivez : <code>démarrer Ramifai</code>. Pour donner un nom à votre arbre : <code>démarrer Ramifai, arbre « Vacances »</code>.</li>
-  <li>Claude dessine l'arbre. Ensuite, discutez comme d'habitude : <b>chaque échange est ajouté à l'arbre</b> et l'image se met à jour toute seule.</li>
-  <li>Pour <b>poser la prochaine question à un endroit précis</b> de l'arbre, touchez une case. Elle devient jaune : votre prochaine question ira juste en dessous.</li>
-  <li>Plus tard, dites <code>démarrer Ramifai</code> avec le même nom d'arbre pour le rouvrir et continuer.</li>
-</ol>
-
-<h2>Questions fréquentes</h2>
-<details><summary>Les autres personnes voient-elles mes arbres ?</summary>
-<p>Non. Chaque personne se connecte avec son adresse e-mail et n'accède qu'à ses propres arbres.</p></details>
-<details><summary>Mes arbres sont-ils secrets ?</summary>
-<p>Ils sont protégés par votre compte et stockés en Europe, mais ils ne sont pas chiffrés de bout en bout : pour répondre, Claude doit pouvoir les lire. N'y mettez pas de secrets très sensibles.</p></details>
-<details><summary>Je ne vois pas « Ajouter un connecteur personnalisé »</summary>
-<p>Cette option dépend de votre abonnement Claude. Consultez <code>support.claude.com</code> et cherchez « connecteurs personnalisés ».</p></details>
-<details><summary>Le dessin n'apparaît pas</summary>
-<p>Redites <code>démarrer Ramifai</code> dans une nouvelle conversation. Sur ordinateur, le dessin s'ouvre à droite de la conversation ; sur téléphone, touchez « Ouvrir l'arbre ».</p></details>
-<details><summary>Le code ne marche pas ou ne vient pas</summary>
-<p>Redemandez-en un depuis la page Ramifai (une seule demande par minute). Vérifiez l'orthographe de l'adresse e-mail et les spams.</p></details>
-<details><summary>Comment enlever Ramifai ?</summary>
-<p>Claude → Paramètres → Connecteurs → Ramifai → Supprimer.</p></details>
-
-<p class="tip">Les curieux peuvent lire le code, public : <code>github.com/alexisbth/arbre-llm</code>.</p>
-</section>
-
-<!-- ============================== ENGLISH ============================== -->
-<section id="en" lang="en">
-<h2 style="border-top:2px solid var(--accent)">Ramifai in Claude — step by step</h2>
-<p class="intro">Ramifai keeps your conversations with Claude as a tree (mind map). This guide needs no technical knowledge and about 5 minutes. No GitHub account, nothing to install.</p>
-
-<h2>What you need</h2>
-<ul>
-  <li>A Claude account (<b>claude.ai</b> or the app). Depending on your plan, Claude may limit custom connectors: if the option is missing, check Claude's help (support.claude.com).</li>
-  <li>An email address you can read easily: Ramifai sends you a sign-in code.</li>
-</ul>
-
-<h2>Add Ramifai to Claude</h2>
-<ol>
-  <li>
-    <b>Open Claude</b> at <code>claude.ai</code> in your browser (computer or phone) and sign in.
-    <p class="tip">Once added on the website, Ramifai also shows up in the Claude phone app.</p>
-  </li>
-  <li>Go to <b>Settings</b> (your name or photo, bottom left), then <b>Connectors</b>, then <b>Add custom connector</b>.</li>
-  <li>
-    As <b>Name</b>, type <code>Ramifai</code>. As <b>URL</b>, paste the address below (tap it once to select it all, then copy):
-    <code class="addr">https://rhxlsyymnenlvureuxdf.supabase.co/functions/v1/mcp</code>
-    Confirm with <b>Add</b>.
-  </li>
-  <li>Click <b>Connect</b> next to Ramifai. A Ramifai page opens: enter your <b>email address</b>.</li>
-  <li>
-    Open your mailbox. You get a message "Your Ramifai sign-in code" with a <b>6-digit code</b>. Type it into the Ramifai page.
-    <p class="tip">Nothing after 2 minutes? Check your spam folder. The sender is <code>no-reply@virtom.life</code>.</p>
-  </li>
-  <li>The page shows which assistant asks for access. Click <b>Allow</b>. You are back in Claude: done.</li>
-</ol>
-
-<h2>Using it</h2>
-<ol>
-  <li>In a <b>new conversation</b>, write <code>start Ramifai</code>. To name your tree: <code>start Ramifai, tree "Holidays"</code>.</li>
-  <li>Claude draws the tree. Then chat as usual: <b>every exchange is added to the tree</b> and the picture updates by itself.</li>
-  <li>To <b>ask the next question at a precise place</b>, tap a box. It turns yellow: your next question goes right under it.</li>
-  <li>Later, say <code>start Ramifai</code> with the same tree name to reopen it and carry on.</li>
-</ol>
-
-<h2>FAQ</h2>
-<details><summary>Can other people see my trees?</summary>
-<p>No. Each person signs in with their own email and only reaches their own trees.</p></details>
-<details><summary>Are my trees secret?</summary>
-<p>They are protected by your account and stored in Europe, but they are not end-to-end encrypted: Claude must be able to read them to answer. Do not store highly sensitive secrets.</p></details>
-<details><summary>I can't find "Add custom connector"</summary>
-<p>It depends on your Claude plan. See <code>support.claude.com</code> and search "custom connectors".</p></details>
-<details><summary>The drawing does not appear</summary>
-<p>Say <code>start Ramifai</code> again in a new conversation. On a computer the drawing opens beside the chat; on a phone, tap "Open the tree".</p></details>
-<details><summary>The code does not come or does not work</summary>
-<p>Ask for a new one from the Ramifai page (one request per minute). Check the email spelling and your spam folder.</p></details>
-<details><summary>How do I remove Ramifai?</summary>
-<p>Claude → Settings → Connectors → Ramifai → Remove.</p></details>
-
-<p class="tip">The curious can read the public code: <code>github.com/alexisbth/arbre-llm</code>.</p>
-</section>
-
+  <header>
+    <span class="logo">🌳 Ramifai</span>
+    <span class="lang"><button id="l-fr">FR</button><button id="l-en">EN</button></span>
+  </header>
+  <div class="bar" id="bar" hidden><i id="barfill"></i></div>
+  <div id="view"></div>
 </main>
+
+<script>
+var ADDR = 'https://rhxlsyymnenlvureuxdf.supabase.co/functions/v1/mcp';
+var APP = 'https://alexisbth.github.io/arbre-llm/';
+
+var T = {
+  fr: {
+    pickTitle: 'Sur quel assistant IA es-tu ?',
+    pickText: 'Ramifai garde tes conversations sous forme d\'arbre. Choisis ton assistant : 5 minutes, rien à installer.',
+    claude: 'Claude', claudeSub: 'claude.ai ou l\'application Claude',
+    chatgpt: 'ChatGPT', chatgptSub: 'chatgpt.com ou l\'application',
+    none: 'Aucun des deux', noneSub: 'Gemini, Mistral, ou pas d\'IA du tout',
+    done: 'C\'est fait', back: 'Retour', stuck: 'Je suis bloqué', restart: 'Changer d\'assistant',
+    copy: 'Copier', copied: 'Copié ✓', step: 'Étape',
+    finishTitle: 'C\'est prêt 🎉',
+    finishText: 'Discute comme d\'habitude : chaque échange est ajouté à l\'arbre. <b>Touche une case</b> pour poser ta prochaine question juste en dessous.',
+    finishBtn: 'Recommencer',
+    untested: '⚠️ Étapes écrites d\'après la documentation, non testées : le menu de ChatGPT change souvent et dépend de ton abonnement. Si tu ne trouves pas, consulte <a href="https://help.openai.com" target="_blank" rel="noopener">help.openai.com</a>.',
+    copyHint: 'Touche « Copier », puis colle.'
+  },
+  en: {
+    pickTitle: 'Which AI assistant do you use?',
+    pickText: 'Ramifai keeps your conversations as a tree. Pick your assistant: 5 minutes, nothing to install.',
+    claude: 'Claude', claudeSub: 'claude.ai or the Claude app',
+    chatgpt: 'ChatGPT', chatgptSub: 'chatgpt.com or the app',
+    none: 'Neither', noneSub: 'Gemini, Mistral, or no AI at all',
+    done: 'Done', back: 'Back', stuck: 'I\'m stuck', restart: 'Change assistant',
+    copy: 'Copy', copied: 'Copied ✓', step: 'Step',
+    finishTitle: 'You\'re all set 🎉',
+    finishText: 'Chat as usual: every exchange is added to the tree. <b>Tap a box</b> to ask your next question right under it.',
+    finishBtn: 'Start over',
+    untested: '⚠️ Steps written from the documentation, not tested: ChatGPT\'s menu changes often and depends on your plan. If you can\'t find it, see <a href="https://help.openai.com" target="_blank" rel="noopener">help.openai.com</a>.',
+    copyHint: 'Tap "Copy", then paste.'
+  }
+};
+
+/* Each step: t = title, x = text, copy = string to copy (optional), h = help text */
+var FLOWS = {
+  claude: {
+    fr: [
+      { t: 'Ouvre Claude', x: 'Va sur <b>claude.ai</b> dans ton navigateur et connecte-toi.', h: 'Une fois le connecteur ajouté sur le site, il apparaît aussi dans l\'application Claude du téléphone.' },
+      { t: 'Ouvre les connecteurs', x: 'Touche ton <b>nom</b> (en bas à gauche) → <b>Paramètres</b> → <b>Connecteurs</b> → <b>Ajouter un connecteur personnalisé</b>.', h: 'Pas d\'option « personnalisé » ? Elle dépend de ton abonnement Claude. Cherche « connecteurs personnalisés » sur support.claude.com.' },
+      { t: 'Colle l\'adresse', x: 'Nom : <code>Ramifai</code>. Dans « Adresse (URL) », colle ceci, puis touche <b>Ajouter</b>.', copy: ADDR, h: 'Si le bouton Copier ne marche pas, touche l\'adresse : elle se sélectionne en entier.' },
+      { t: 'Connecte-toi', x: 'Touche <b>Connecter</b> à côté de Ramifai. Une page s\'ouvre : tape ton <b>adresse e-mail</b>.', h: 'Rien ne s\'ouvre ? Autorise les fenêtres pop-up pour claude.ai, puis recommence.' },
+      { t: 'Entre le code', x: 'Ouvre ta boîte mail : tu as reçu un <b>code à 6 chiffres</b>. Tape-le dans la page Ramifai.', h: 'Rien après 2 minutes ? Regarde les spams. L\'expéditeur est <code>no-reply@virtom.life</code>. Tu peux redemander un code (une fois par minute).' },
+      { t: 'Autorise', x: 'Touche <b>Autoriser</b>. Tu reviens dans Claude.', h: 'Si Claude affiche une erreur, retourne à l\'étape 4 et recommence.' },
+      { t: 'Démarre', x: 'Dans une <b>nouvelle conversation</b>, écris :', copy: 'démarrer Ramifai', h: 'Le dessin s\'ouvre à droite sur ordinateur ; sur téléphone, touche « Ouvrir l\'arbre ». Rien ? Redis la phrase dans une nouvelle conversation.' }
+    ],
+    en: [
+      { t: 'Open Claude', x: 'Go to <b>claude.ai</b> in your browser and sign in.', h: 'Once the connector is added on the website, it also appears in the Claude phone app.' },
+      { t: 'Open connectors', x: 'Tap your <b>name</b> (bottom left) → <b>Settings</b> → <b>Connectors</b> → <b>Add custom connector</b>.', h: 'No "custom" option? It depends on your Claude plan. Search "custom connectors" on support.claude.com.' },
+      { t: 'Paste the address', x: 'Name: <code>Ramifai</code>. In "URL", paste this, then tap <b>Add</b>.', copy: ADDR, h: 'If Copy does not work, tap the address: it selects all of it.' },
+      { t: 'Sign in', x: 'Tap <b>Connect</b> next to Ramifai. A page opens: type your <b>email address</b>.', h: 'Nothing opens? Allow pop-ups for claude.ai, then try again.' },
+      { t: 'Enter the code', x: 'Open your mailbox: you received a <b>6-digit code</b>. Type it into the Ramifai page.', h: 'Nothing after 2 minutes? Check spam. The sender is <code>no-reply@virtom.life</code>. You can ask for a new code (once a minute).' },
+      { t: 'Allow', x: 'Tap <b>Allow</b>. You are back in Claude.', h: 'If Claude shows an error, go back to step 4 and start again.' },
+      { t: 'Start', x: 'In a <b>new conversation</b>, write:', copy: 'start Ramifai', h: 'On a computer the drawing opens on the right; on a phone, tap "Open the tree". Nothing? Say it again in a new conversation.' }
+    ]
+  },
+  chatgpt: {
+    warn: true,
+    fr: [
+      { t: 'Ouvre ChatGPT', x: 'Va sur <b>chatgpt.com</b> dans ton navigateur et connecte-toi.', h: 'Ajouter un serveur personnalisé exige souvent un abonnement payant, et dans un espace de travail (équipe, entreprise), l\'administrateur peut l\'interdire.' },
+      { t: 'Ouvre les plugins', x: 'Cherche <b>Plugins</b> dans le menu (ou dans les <b>Paramètres</b>), puis touche le bouton <b>+</b> et <b>Add custom MCP server</b>.', h: 'L\'ancien chemin était Paramètres → Apps → Advanced settings → mode développeur. Essaie-le si tu ne vois pas « Plugins ».' },
+      { t: 'Colle l\'adresse', x: 'Nom : <code>Ramifai</code>. Dans l\'adresse du serveur, colle ceci. Pour l\'authentification, choisis <b>OAuth</b> si on te le demande.', copy: ADDR, h: 'Si le bouton Copier ne marche pas, touche l\'adresse : elle se sélectionne en entier.' },
+      { t: 'Connecte-toi', x: 'Touche <b>Connecter</b> / <b>Autoriser</b>. Une page Ramifai s\'ouvre : tape ton <b>adresse e-mail</b>.', h: 'Rien ne s\'ouvre ? Autorise les fenêtres pop-up pour chatgpt.com.' },
+      { t: 'Entre le code', x: 'Ouvre ta boîte mail : tu as reçu un <b>code à 6 chiffres</b>. Tape-le dans la page Ramifai.', h: 'Rien après 2 minutes ? Regarde les spams. L\'expéditeur est <code>no-reply@virtom.life</code>.' },
+      { t: 'Autorise', x: 'Touche <b>Autoriser</b>. Tu reviens dans ChatGPT.', h: 'En cas d\'erreur, retourne à l\'étape 4.' },
+      { t: 'Démarre', x: 'Dans une <b>nouvelle conversation</b>, active Ramifai (bouton + ou menu des outils) et écris :', copy: 'démarrer Ramifai', h: 'Je n\'ai pas pu tester ce parcours : dis-moi où ça coince.' }
+    ],
+    en: [
+      { t: 'Open ChatGPT', x: 'Go to <b>chatgpt.com</b> in your browser and sign in.', h: 'Adding a custom server often needs a paid plan, and in a workspace (team, company) the administrator may forbid it.' },
+      { t: 'Open plugins', x: 'Look for <b>Plugins</b> in the menu (or in <b>Settings</b>), then tap the <b>+</b> button and <b>Add custom MCP server</b>.', h: 'The older path was Settings → Apps → Advanced settings → developer mode. Try it if you don\'t see "Plugins".' },
+      { t: 'Paste the address', x: 'Name: <code>Ramifai</code>. In the server address, paste this. If asked for authentication, choose <b>OAuth</b>.', copy: ADDR, h: 'If Copy does not work, tap the address: it selects all of it.' },
+      { t: 'Sign in', x: 'Tap <b>Connect</b> / <b>Authorize</b>. A Ramifai page opens: type your <b>email address</b>.', h: 'Nothing opens? Allow pop-ups for chatgpt.com.' },
+      { t: 'Enter the code', x: 'Open your mailbox: you received a <b>6-digit code</b>. Type it into the Ramifai page.', h: 'Nothing after 2 minutes? Check spam. The sender is <code>no-reply@virtom.life</code>.' },
+      { t: 'Allow', x: 'Tap <b>Allow</b>. You are back in ChatGPT.', h: 'On error, go back to step 4.' },
+      { t: 'Start', x: 'In a <b>new conversation</b>, turn Ramifai on (+ button or tools menu) and write:', copy: 'start Ramifai', h: 'I could not test this path: tell me where it gets stuck.' }
+    ]
+  },
+  none: {
+    fr: [
+      { t: 'Ouvre l\'appli Ramifai', x: 'Ramifai marche aussi seul, dans ton navigateur. Ouvre :', copy: APP, h: 'Sur téléphone : menu du navigateur → « Installer l\'application » (Android) ou Partager → « Sur l\'écran d\'accueil » (iPhone).' },
+      { t: 'Prends une clé gratuite', x: 'Une clé est un mot de passe qui permet à Ramifai de parler à une IA. Crée-en une gratuite sur <a href="https://aistudio.google.com" target="_blank" rel="noopener">aistudio.google.com</a> (Gemini) ou <a href="https://console.groq.com" target="_blank" rel="noopener">console.groq.com</a> (Groq), puis copie-la.', h: 'Garde la clé pour toi. Elle reste sur ton appareil et n\'est envoyée qu\'à l\'IA choisie.' },
+      { t: 'Colle-la dans Ramifai', x: 'Dans l\'appli : menu <b>⋯</b> → <b>Réglages</b> → choisis <b>Gemini</b> ou <b>Groq</b> → colle la clé. Puis pose ta première question.', h: 'Sans clé, l\'appli fonctionne en démo avec des réponses simulées.' }
+    ],
+    en: [
+      { t: 'Open the Ramifai app', x: 'Ramifai also works on its own, in your browser. Open:', copy: APP, h: 'On a phone: browser menu → "Install app" (Android) or Share → "Add to Home Screen" (iPhone).' },
+      { t: 'Get a free key', x: 'A key is a password that lets Ramifai talk to an AI. Create a free one at <a href="https://aistudio.google.com" target="_blank" rel="noopener">aistudio.google.com</a> (Gemini) or <a href="https://console.groq.com" target="_blank" rel="noopener">console.groq.com</a> (Groq), then copy it.', h: 'Keep the key to yourself. It stays on your device and is only sent to the AI you chose.' },
+      { t: 'Paste it in Ramifai', x: 'In the app: menu <b>⋯</b> → <b>Settings</b> → choose <b>Gemini</b> or <b>Groq</b> → paste the key. Then ask your first question.', h: 'Without a key, the app runs in demo mode with simulated answers.' }
+    ]
+  }
+};
+
+var lang = (navigator.language || 'fr').slice(0, 2) === 'en' ? 'en' : 'fr';
+var state = { flow: null, i: 0 };
+var view = document.getElementById('view');
+var bar = document.getElementById('bar');
+var fill = document.getElementById('barfill');
+
+function el(html) { var d = document.createElement('div'); d.innerHTML = html; return d; }
+function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
+
+function parseHash() {
+  var m = /^#(claude|chatgpt|none)-(\d+)$/.exec(location.hash);
+  if (m) { state.flow = m[1]; state.i = parseInt(m[2], 10); } else { state.flow = null; state.i = 0; }
+}
+var rendered = null;
+function go(flow, i) { location.hash = flow ? flow + '-' + i : ''; render(); }
+
+function render() {
+  var key = location.hash + '|' + lang;
+  if (key === rendered) return;
+  rendered = key;
+  parseHash();
+  var t = T[lang];
+  document.documentElement.lang = lang;
+  document.getElementById('l-fr').className = lang === 'fr' ? 'on' : '';
+  document.getElementById('l-en').className = lang === 'en' ? 'on' : '';
+  view.innerHTML = '';
+  var flow = state.flow && FLOWS[state.flow];
+  if (!flow) { bar.hidden = true; return renderPick(t); }
+  var steps = flow[lang], n = steps.length;
+  if (state.i >= n) { bar.hidden = false; fill.style.width = '100%'; return renderFinish(t); }
+  if (state.i < 0) state.i = 0;
+  bar.hidden = false;
+  fill.style.width = (state.i / n * 100) + '%';
+  var s = steps[state.i];
+  var h = '<p class="count">' + t.step + ' ' + (state.i + 1) + ' / ' + n + '</p>' +
+          '<h1>' + s.t + '</h1>' +
+          (flow.warn && state.i === 0 ? '<div class="warn">' + t.untested + '</div>' : '') +
+          '<p class="text">' + s.x + '</p>';
+  if (s.copy) h += '<div class="addr"><code>' + esc(s.copy) + '</code><button id="copy">' + t.copy + '</button></div>';
+  h += '<div class="card help" id="help">' + s.h + '</div>' +
+       '<div class="actions"><button class="primary" id="next">' + t.done + '</button>' +
+       '<div class="row"><button class="link" id="prev">← ' + t.back + '</button><button class="link" id="stuck">' + t.stuck + '</button></div></div>';
+  view.appendChild(el(h));
+  document.getElementById('next').onclick = function () { go(state.flow, state.i + 1); };
+  document.getElementById('prev').onclick = function () { state.i === 0 ? go(null) : go(state.flow, state.i - 1); };
+  document.getElementById('stuck').onclick = function () { document.getElementById('help').classList.toggle('open'); };
+  var cb = document.getElementById('copy');
+  if (cb) cb.onclick = function () { copyText(s.copy, cb, t); };
+  window.scrollTo(0, 0);
+}
+
+function renderPick(t) {
+  var h = '<h1>' + t.pickTitle + '</h1><p class="text">' + t.pickText + '</p>' +
+    '<button class="big" data-f="claude">' + t.claude + '<small>' + t.claudeSub + '</small></button>' +
+    '<button class="big" data-f="chatgpt">' + t.chatgpt + '<small>' + t.chatgptSub + '</small></button>' +
+    '<button class="big" data-f="none">' + t.none + '<small>' + t.noneSub + '</small></button>';
+  view.appendChild(el(h));
+  Array.prototype.forEach.call(view.querySelectorAll('.big'), function (b) { b.onclick = function () { go(b.getAttribute('data-f'), 0); }; });
+}
+
+function renderFinish(t) {
+  var h = '<h1>' + t.finishTitle + '</h1><p class="text">' + t.finishText + '</p>' +
+    '<div class="actions"><button class="primary" id="again">' + t.restart + '</button>' +
+    '<div class="row"><button class="link" id="prev">← ' + t.back + '</button></div></div>';
+  view.appendChild(el(h));
+  document.getElementById('again').onclick = function () { go(null); };
+  document.getElementById('prev').onclick = function () { go(state.flow, FLOWS[state.flow][lang].length - 1); };
+}
+
+function copyText(s, btn, t) {
+  function ok() { btn.textContent = t.copied; btn.className = 'ok'; setTimeout(function () { btn.textContent = t.copy; btn.className = ''; }, 1800); }
+  function fallback() {
+    var ta = document.createElement('textarea'); ta.value = s; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); ok(); } catch (e) {}
+    document.body.removeChild(ta);
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(s).then(ok, fallback); else fallback();
+}
+
+document.getElementById('l-fr').onclick = function () { lang = 'fr'; render(); };
+document.getElementById('l-en').onclick = function () { lang = 'en'; render(); };
+window.addEventListener('hashchange', render);
+render();
+</script>
 </body>
 </html>
