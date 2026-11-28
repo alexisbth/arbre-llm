@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ramifai dans Claude — guide pas à pas · step-by-step guide</title>
+<style>
+  :root { color-scheme: light dark; --bg:#faf9f5; --fg:#1f1e1d; --muted:#6b6a68; --card:#fff; --line:#e4e2da; --accent:#c96442; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#262624; --fg:#f0eee6; --muted:#a8a69e; --card:#30302e; --line:#44433f; --accent:#e08a6a; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:17px/1.6 system-ui, sans-serif; }
+  main { max-width: 40rem; margin: 0 auto; padding: 1.5rem 1.1rem 4rem; }
+  h1 { font-size: 1.7rem; margin: .2rem 0 .3rem; }
+  h2 { font-size: 1.3rem; margin: 2.2rem 0 .6rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+  .lang a { color: var(--accent); font-weight: 600; margin-right: 1rem; }
+  .intro { color: var(--muted); margin-top: 0; }
+  ol { padding-left: 0; list-style: none; counter-reset: s; }
+  ol > li { counter-increment: s; position: relative; margin: 1rem 0; padding: .9rem 1rem .9rem 3.2rem; background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+  ol > li::before { content: counter(s); position: absolute; left: .9rem; top: .85rem; width: 1.6rem; height: 1.6rem; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 700; font-size: .95rem; display: flex; align-items: center; justify-content: center; }
+  code { background: rgba(127,127,127,.15); padding: .1rem .35rem; border-radius: 5px; font-size: .92em; }
+  .addr { display: block; margin: .5rem 0 .2rem; padding: .7rem .8rem; word-break: break-all; user-select: all; -webkit-user-select: all; font-size: .9rem; border: 1px dashed var(--accent); background: transparent; }
+  .tip { color: var(--muted); font-size: .95rem; margin: .4rem 0 0; }
+  details { margin: .6rem 0; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: .6rem 1rem; }
+  summary { cursor: pointer; font-weight: 600; }
+  p, li { margin-top: .3rem; }
+</style>
+</head>
+<body>
+<main>
+
+<p class="lang"><a href="#fr">Français</a><a href="#en">English</a></p>
+
+<!-- ============================== FRANÇAIS ============================== -->
+<section id="fr" lang="fr">
+<h1>Ramifai dans Claude</h1>
+<p class="intro">Ramifai garde vos conversations avec Claude sous forme d'arbre (carte mentale). Ce guide explique comment l'ajouter à Claude, sans aucune connaissance technique. Comptez 5 minutes. Vous n'avez besoin ni de GitHub, ni d'installer quoi que ce soit.</p>
+
+<h2>Ce qu'il vous faut</h2>
+<ul>
+  <li>Un compte Claude (le site <b>claude.ai</b> ou l'application). Selon votre abonnement, Claude peut limiter l'ajout de connecteurs : si l'option manque, regardez l'aide de Claude (support.claude.com).</li>
+  <li>Une adresse e-mail que vous consultez facilement : Ramifai vous y envoie un code pour vous connecter.</li>
+</ul>
+
+<h2>Ajouter Ramifai à Claude</h2>
+<ol>
+  <li>
+    <b>Ouvrez Claude</b> sur <code>claude.ai</code> dans votre navigateur (ordinateur ou téléphone), et connectez-vous.
+    <p class="tip">Une fois ajouté sur le site, Ramifai apparaît aussi dans l'application Claude de votre téléphone.</p>
+  </li>
+  <li>
+    Allez dans <b>Paramètres</b> (votre nom ou votre photo, en bas à gauche), puis <b>Connecteurs</b>, puis <b>Ajouter un connecteur personnalisé</b>.
+  </li>
+  <li>
+    Dans <b>Nom</b>, écrivez <code>Ramifai</code>. Dans <b>Adresse (URL)</b>, collez l'adresse ci-dessous (touchez-la une fois pour la sélectionner en entier, puis copiez) :
+    <code class="addr">https://rhxlsyymnenlvureuxdf.supabase.co/functions/v1/mcp</code>
+    Validez avec <b>Ajouter</b>.
+  </li>
+  <li>
+    Cliquez sur <b>Connecter</b> à côté de Ramifai. Une page Ramifai s'ouvre : saisissez votre <b>adresse e-mail</b>.
+  </li>
+  <li>
+    Ouvrez votre boîte mail. Vous recevez un message « Your Ramifai sign-in code » avec un <b>code à 6 chiffres</b>. Recopiez-le dans la page Ramifai.
+    <p class="tip">Rien dans les 2 minutes ? Regardez les spams / courriers indésirables. L'expéditeur est <code>no-reply@virtom.life</code>.</p>
+  </li>
+  <li>
+    La page vous montre quel assistant demande l'accès. Cliquez sur <b>Autoriser</b>. Vous revenez dans Claude : c'est fini.
+  </li>
+</ol>
+
+<h2>S'en servir</h2>
+<ol>
+  <li>Dans une <b>nouvelle conversation</b>, écrivez : <code>démarrer Ramifai</code>. Pour donner un nom à votre arbre : <code>démarrer Ramifai, arbre « Vacances »</code>.</li>
+  <li>Claude dessine l'arbre. Ensuite, discutez comme d'habitude : <b>chaque échange est ajouté à l'arbre</b> et l'image se met à jour toute seule.</li>
+  <li>Pour <b>poser la prochaine question à un endroit précis</b> de l'arbre, touchez une case. Elle devient jaune : votre prochaine question ira juste en dessous.</li>
+  <li>Plus tard, dites <code>démarrer Ramifai</code> avec le même nom d'arbre pour le rouvrir et continuer.</li>
+</ol>
+
+<h2>Questions fréquentes</h2>
+<details><summary>Les autres personnes voient-elles mes arbres ?</summary>
+<p>Non. Chaque personne se connecte avec son adresse e-mail et n'accède qu'à ses propres arbres.</p></details>
+<details><summary>Mes arbres sont-ils secrets ?</summary>
+<p>Ils sont protégés par votre compte et stockés en Europe, mais ils ne sont pas chiffrés de bout en bout : pour répondre, Claude doit pouvoir les lire. N'y mettez pas de secrets très sensibles.</p></details>
+<details><summary>Je ne vois pas « Ajouter un connecteur personnalisé »</summary>
+<p>Cette option dépend de votre abonnement Claude. Consultez <code>support.claude.com</code> et cherchez « connecteurs personnalisés ».</p></details>
+<details><summary>Le dessin n'apparaît pas</summary>
+<p>Redites <code>démarrer Ramifai</code> dans une nouvelle conversation. Sur ordinateur, le dessin s'ouvre à droite de la conversation ; sur téléphone, touchez « Ouvrir l'arbre ».</p></details>
+<details><summary>Le code ne marche pas ou ne vient pas</summary>
+<p>Redemandez-en un depuis la page Ramifai (une seule demande par minute). Vérifiez l'orthographe de l'adresse e-mail et les spams.</p></details>
+<details><summary>Comment enlever Ramifai ?</summary>
+<p>Claude → Paramètres → Connecteurs → Ramifai → Supprimer.</p></details>
+
+<p class="tip">Les curieux peuvent lire le code, public : <code>github.com/alexisbth/arbre-llm</code>.</p>
+</section>
+
+<!-- ============================== ENGLISH ============================== -->
+<section id="en" lang="en">
+<h2 style="border-top:2px solid var(--accent)">Ramifai in Claude — step by step</h2>
+<p class="intro">Ramifai keeps your conversations with Claude as a tree (mind map). This guide needs no technical knowledge and about 5 minutes. No GitHub account, nothing to install.</p>
+
+<h2>What you need</h2>
+<ul>
+  <li>A Claude account (<b>claude.ai</b> or the app). Depending on your plan, Claude may limit custom connectors: if the option is missing, check Claude's help (support.claude.com).</li>
+  <li>An email address you can read easily: Ramifai sends you a sign-in code.</li>
+</ul>
+
+<h2>Add Ramifai to Claude</h2>
+<ol>
+  <li>
+    <b>Open Claude</b> at <code>claude.ai</code> in your browser (computer or phone) and sign in.
+    <p class="tip">Once added on the website, Ramifai also shows up in the Claude phone app.</p>
+  </li>
+  <li>Go to <b>Settings</b> (your name or photo, bottom left), then <b>Connectors</b>, then <b>Add custom connector</b>.</li>
+  <li>
+    As <b>Name</b>, type <code>Ramifai</code>. As <b>URL</b>, paste the address below (tap it once to select it all, then copy):
+    <code class="addr">https://rhxlsyymnenlvureuxdf.supabase.co/functions/v1/mcp</code>
+    Confirm with <b>Add</b>.
+  </li>
+  <li>Click <b>Connect</b> next to Ramifai. A Ramifai page opens: enter your <b>email address</b>.</li>
+  <li>
+    Open your mailbox. You get a message "Your Ramifai sign-in code" with a <b>6-digit code</b>. Type it into the Ramifai page.
+    <p class="tip">Nothing after 2 minutes? Check your spam folder. The sender is <code>no-reply@virtom.life</code>.</p>
+  </li>
+  <li>The page shows which assistant asks for access. Click <b>Allow</b>. You are back in Claude: done.</li>
+</ol>
+
+<h2>Using it</h2>
+<ol>
+  <li>In a <b>new conversation</b>, write <code>start Ramifai</code>. To name your tree: <code>start Ramifai, tree "Holidays"</code>.</li>
+  <li>Claude draws the tree. Then chat as usual: <b>every exchange is added to the tree</b> and the picture updates by itself.</li>
+  <li>To <b>ask the next question at a precise place</b>, tap a box. It turns yellow: your next question goes right under it.</li>
+  <li>Later, say <code>start Ramifai</code> with the same tree name to reopen it and carry on.</li>
+</ol>
+
+<h2>FAQ</h2>
+<details><summary>Can other people see my trees?</summary>
+<p>No. Each person signs in with their own email and only reaches their own trees.</p></details>
+<details><summary>Are my trees secret?</summary>
+<p>They are protected by your account and stored in Europe, but they are not end-to-end encrypted: Claude must be able to read them to answer. Do not store highly sensitive secrets.</p></details>
+<details><summary>I can't find "Add custom connector"</summary>
+<p>It depends on your Claude plan. See <code>support.claude.com</code> and search "custom connectors".</p></details>
+<details><summary>The drawing does not appear</summary>
+<p>Say <code>start Ramifai</code> again in a new conversation. On a computer the drawing opens beside the chat; on a phone, tap "Open the tree".</p></details>
+<details><summary>The code does not come or does not work</summary>
+<p>Ask for a new one from the Ramifai page (one request per minute). Check the email spelling and your spam folder.</p></details>
+<details><summary>How do I remove Ramifai?</summary>
+<p>Claude → Settings → Connectors → Ramifai → Remove.</p></details>
+
+<p class="tip">The curious can read the public code: <code>github.com/alexisbth/arbre-llm</code>.</p>
+</section>
+
+</main>
+</body>
+</html>
